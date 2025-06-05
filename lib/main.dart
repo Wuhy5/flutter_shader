@@ -33,9 +33,11 @@ class _ShaderDemoPageState extends State<ShaderDemoPage> {
   Offset _dragPosition = Offset.zero;
   Offset _dragStart = Offset.zero;
   bool _isDragging = false;
-
-  ui.Image? _frontImage;
-  ui.Image? _backImage;
+  int _totalPages = 8;
+  int _pageIndex = 1;
+  List<ui.Image> _pages = [];
+  bool _isTurnNext = true;
+  bool _isTurnPrev = true;
 
   @override
   void initState() {
@@ -44,102 +46,90 @@ class _ShaderDemoPageState extends State<ShaderDemoPage> {
   }
 
   Future<void> _loadImages() async {
-    // 使用文本绘制两个图片
-    // 使用文本绘制两个图片
-    final recorder1 = ui.PictureRecorder();
-    final canvas1 = Canvas(recorder1);
-    canvas1.drawColor(Colors.yellow, ui.BlendMode.src);
-    final textStyle = ui.TextStyle(color: Colors.black, fontSize: 48);
-    final paragraphStyle = ui.ParagraphStyle(
-      textAlign: TextAlign.center,
-      fontWeight: FontWeight.bold,
-      fontSize: 48,
-    );
-    final builder1 = ui.ParagraphBuilder(paragraphStyle)
-      ..pushStyle(textStyle)
-      ..addText('第一页\nHello Flutter!');
-    final paragraph1 = builder1.build()
-      ..layout(ui.ParagraphConstraints(width: 300));
-    canvas1.drawRect(
-      Rect.fromLTWH(0, 0, 300, 300),
-      Paint()..color = Colors.white,
-    );
-    canvas1.drawParagraph(paragraph1, Offset(0, 100));
-    final img1 = await recorder1.endRecording().toImage(300, 300);
+    // 使用文本绘制8个图片
+    for (int i = 0; i < _totalPages; i++) {
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
+      final paint = Paint()
+        ..color = Colors.primaries[i % Colors.primaries.length]
+        ..style = PaintingStyle.fill;
 
-    final recorder2 = ui.PictureRecorder();
-    final canvas2 = Canvas(recorder2);
-    final builder2 = ui.ParagraphBuilder(paragraphStyle)
-      ..pushStyle(textStyle)
-      ..addText('第二页\nPage 2');
-    final paragraph2 = builder2.build()
-      ..layout(ui.ParagraphConstraints(width: 300));
-    canvas2.drawRect(
-      Rect.fromLTWH(0, 0, 300, 300),
-      Paint()..color = Colors.lightBlue.shade50,
-    );
-    canvas2.drawParagraph(paragraph2, Offset(0, 100));
-    final img2 = await recorder2.endRecording().toImage(300, 300);
+      // 绘制一个填充矩形作为示例图片
+      canvas.drawRect(Rect.fromLTWH(0, 0, 300, 400), paint);
 
-    setState(() {
-      _frontImage = img1;
-      _backImage = img2;
-    });
+      // 绘制文本
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text: 'Page ${i + 1}',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      );
+      textPainter.layout();
+      textPainter.paint(
+        canvas,
+        Offset(150 - textPainter.width / 2, 150 - textPainter.height / 2),
+      );
+
+      // 将绘制的内容转换为图片
+      final picture = recorder.endRecording();
+      final image = await picture.toImage(300, 400);
+      _pages.add(image);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('着色器翻页效果'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // 着色器画布
-            if (_frontImage != null && _backImage != null)
-              GestureDetector(
-                onPanStart: (details) {
-                  setState(() {
-                    _isDragging = true;
-                    _dragStart = details.localPosition;
-                    _dragPosition = details.localPosition;
-                  });
-                },
-                onPanUpdate: (details) {
-                  setState(() {
-                    _dragPosition = details.localPosition;
-                  });
-                },
-                onPanEnd: (details) {
-                  setState(() {
-                    _isDragging = false;
-                  });
-                },
-                child: ShaderBuilder(
-                  assetKey: 'shaders/page_curl.frag',
-                  (context, shader, child) => CustomPaint(
-                    size: Size(300, 300),
-                    painter: ShaderPainter(
-                      shader: shader,
-                      frontImage: _frontImage!,
-                      backImage: _backImage!,
-                      mousePos: _dragPosition,
-                      mouseStart: _dragStart,
-                      isDragging: _isDragging,
-                    ),
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          // 着色器画布
+          if (_pages.isNotEmpty)
+            GestureDetector(
+              onPanStart: (details) {
+                setState(() {
+                  _isDragging = true;
+                  _dragStart = details.localPosition;
+                  _dragPosition = details.localPosition;
+                });
+              },
+              onPanUpdate: (details) {
+                setState(() {
+                  _dragPosition = details.localPosition;
+                });
+              },
+              onPanEnd: (details) {
+                setState(() {
+                  _isDragging = false;
+                });
+              },
+              child: ShaderBuilder(
+                assetKey: 'shaders/page_curl.frag',
+                (context, shader, child) => CustomPaint(
+                  size: Size(300, 400),
+                  painter: ShaderPainter(
+                    shader: shader,
+                    preImage: _isTurnPrev ? _pages[_pageIndex - 1] : null,
+                    frontImage: _pages[_pageIndex],
+                    backImage: _isTurnNext ? _pages[_pageIndex + 1] : null,
+                    mousePos: _dragPosition,
+                    mouseStart: _dragStart,
+                    isDragging: _isDragging,
                   ),
-                  child: const Center(child: CircularProgressIndicator()),
                 ),
-              )
-            else
-              const CircularProgressIndicator(),
-            const SizedBox(height: 20),
-            const Text('从右侧边缘向左拖动来查看翻页效果'),
-          ],
-        ),
+                child: const Center(child: CircularProgressIndicator()),
+              ),
+            )
+          else
+            const CircularProgressIndicator(),
+          const SizedBox(height: 20),
+          const Text('从右侧边缘向左拖动来查看翻页效果'),
+        ],
       ),
     );
   }
@@ -147,16 +137,18 @@ class _ShaderDemoPageState extends State<ShaderDemoPage> {
 
 class ShaderPainter extends CustomPainter {
   final ui.FragmentShader shader;
+  final ui.Image? preImage;
   final ui.Image frontImage;
-  final ui.Image backImage;
+  final ui.Image? backImage;
   final Offset mousePos;
   final Offset mouseStart;
   final bool isDragging;
 
   ShaderPainter({
     required this.shader,
+    this.preImage,
     required this.frontImage,
-    required this.backImage,
+    this.backImage,
     required this.mousePos,
     required this.mouseStart,
     required this.isDragging,
@@ -174,9 +166,14 @@ class ShaderPainter extends CustomPainter {
     shader.setFloat(4, isDragging ? mouseStart.dx : 0.0); // iMouse.z
     shader.setFloat(5, isDragging ? mouseStart.dy : 0.0); // iMouse.w
 
-    // 设置前后图片
-    shader.setImageSampler(0, frontImage); // iFrontImage
-    shader.setImageSampler(1, backImage); // iBackImage
+    // 设置图片
+    if (preImage != null) {
+      shader.setImageSampler(0, preImage!); // iPreImage
+    }
+    shader.setImageSampler(1, frontImage); // iBackImage
+    if (backImage != null) {
+      shader.setImageSampler(2, backImage!); // iFrontImage
+    }
     // 绘制全屏矩形
     canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
     print('Mouse Position: ${mousePos.dx}, ${mousePos.dy}');
