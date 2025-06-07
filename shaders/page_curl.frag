@@ -83,7 +83,7 @@ vec2 getCornerFrom(float aspect, float curlDirection, float startMouseY) {
         return startMouseY < halfHeight ? vec2(aspect, 0.0) : vec2(aspect, 1.0);
     } else {
         // 从左往右翻页
-        return startMouseY < halfHeight ? vec2(0.0, 0.0) : vec2(0.0, 1.0);
+        return startMouseY < halfHeight ? vec2(aspect, 1.0) : vec2(aspect, 0.0);
     }
 }
 
@@ -121,25 +121,14 @@ vec2 handleRightToLeftCurl(vec2 mouse, vec2 cornerFrom, float aspect) {
  * @return 约束后的鼠标坐标
  */
 vec2 handleLeftToRightCurl(vec2 mouse, vec2 cornerFrom, float aspect) {
-    vec2 startPoint = cornerFrom; // 直接使用cornerFrom作为起始点
+    vec2 startPoint = vec2(aspect, cornerFrom.y == 0.0 ? 1.0 : 0.0); // 直接使用cornerFrom作为起始点
 
+    // 如果不是从中部开始，执行原来的逻辑
     if (distance(mouse.xy, startPoint) <= aspect) {
         return mouse; // 在允许范围内直接返回
     }
-    
-    // 根据起始角落调整基准向量
-    vec2 vector;
-    bool clockwise;
-    if (cornerFrom.y == 0.0) {
-        // 从左上角开始，向右下方向
-        vector = normalize(vec2(0.5, 0.5 * tan(pi / 3)));
-        clockwise = mouse.y >= tan(pi / 3) * mouse.x;
-    } else {
-        // 从左下角开始，向右上方向
-        vector = normalize(vec2(0.5, -0.5 * tan(pi / 3)));
-        clockwise = mouse.y <= (1.0 - tan(pi / 3) * mouse.x);
-    }
-    
+
+    vec2 vector = normalize(vec2(0.5, 0.5 * tan(pi / 3))); // 基准向量
     vec2 targetMouse = mouse.xy; // 目标鼠标
     vec2 v = targetMouse - startPoint; // 向量差
     float proj_length = dot(v, vector); // 投影长度
@@ -148,7 +137,7 @@ vec2 handleLeftToRightCurl(vec2 mouse, vec2 cornerFrom, float aspect) {
     float arc_distance = distance(targetMouse, startPoint) - aspect; // 到弧线距离
     float actual_distance = min(abs(base_line_distance), abs(arc_distance)); // 取较小距离
     vec2 currentMouse_arc_proj = startPoint + normalize(mouse - startPoint) * aspect; // 弧线上的映射点
-    return pointOnCircle(startPoint, currentMouse_arc_proj, aspect, actual_distance / 2, clockwise); // 返回圆上的点
+    return pointOnCircle(startPoint, currentMouse_arc_proj, aspect, actual_distance / 2, mouse.y <= tan(pi / 3) * mouse.x); // 返回圆上的点
 }
 
 /**
@@ -165,8 +154,7 @@ vec2 getMouseDirection(float curlDirection, vec2 cornerFrom, vec2 mouse, float a
         return normalize(abs(cornerFrom * iResolution.xy / vec2(aspect, 1.0)) - mouse);
     } else {
         // 从左往右翻页
-        vec2 corner = cornerFrom * iResolution.xy / vec2(aspect, 1.0);
-        return normalize(mouse - corner);
+        return normalize(mouse - abs(cornerFrom * iResolution.xy / vec2(aspect, 1.0)));
     }
 }
 
@@ -193,12 +181,21 @@ vec2 getCurlOrigin(float curlDirection, vec2 mouse, vec2 mouseDir, float aspect)
  * @param uv 纹理坐标
  * @param dist 距离
  * @param aspect 宽高比
+ * @param curlDirection 翻页方向
  * @return 背面颜色
  */
-vec4 calculateBacksideColor(vec2 uv, float dist, float aspect) {
-    vec4 color = texture(iChannel1, uv * vec2(1.0 / aspect, 1.0)); // 采样背面纹理
-    color.rgb *= pow(clamp(dist - radius, 0.0, 1.0) * 1.5, 0.2); // 调整亮度
-    return color; // 返回颜色
+vec4 calculateBacksideColor(vec2 uv, float dist, float aspect, float curlDirection) {
+    if (curlDirection == -1.0) {
+        // 从右往左翻页
+        vec4 color = texture(iChannel1, uv * vec2(1.0 / aspect, 1.0)); // 采样背面纹理
+        color.rgb *= pow(clamp(dist - radius, 0.0, 1.0) * 1.5, 0.2); // 调整亮度
+        return color; // 返回颜色
+    } else {
+        // 从左往右翻页
+        vec4 color = texture(iChannel1, uv * vec2(1.0 / aspect, 1.0)); // 采样背面纹理
+        color.rgb *= pow(clamp(dist - radius, 0.0, 1.0) * 1.5, 0.2); // 调整亮度
+        return color; // 返回颜色
+    }
 }
 
 /**
@@ -208,24 +205,46 @@ vec4 calculateBacksideColor(vec2 uv, float dist, float aspect) {
  * @param mouseDir 鼠标方向
  * @param dist 距离
  * @param aspect 宽高比
+ * @param curlDirection 翻页方向
  * @return 弯曲区域颜色
  */
-vec4 calculateCurlColor(vec2 uv, vec2 curlAxisLinePoint, vec2 mouseDir, float dist, float aspect) {
-    float theta = asin(dist / radius); // 计算角度
-    vec2 p2 = curlAxisLinePoint + mouseDir * (pi - theta) * radius; // 计算p2点
-    vec2 p1 = curlAxisLinePoint + mouseDir * theta * radius; // 计算p1点
-    if (p2.x <= aspect && p2.y <= 1.0 && p2.x > 0.0 && p2.y > 0.0) {
-        vec4 color = texture(iChannel0, p2 * vec2(1.0 / aspect, 1.0)); // 采样正面纹理
-        color.rgb = mix(color.rgb, vec3(1.0), 0.25); // 混合高光
-        color.rgb *= pow(clamp((radius - dist) / radius, 0.0, 1.0), 0.2); // 调整亮度
-        return color; // 返回颜色
-    } else {
-        vec4 color = texture(iChannel0, p1 * vec2(1.0 / aspect, 1.0)); // 采样正面纹理
-        if (p2.x <= aspect + shadowWidth && p2.y <= 1.0 + shadowWidth && p2.x > 0.0 - shadowWidth && p2.y > 0.0 - shadowWidth) {
-            float shadow = calShadow(p2, aspect); // 计算阴影
-            color = vec4(color.r * shadow, color.g * shadow, color.b * shadow, color.a); // 应用阴影
+vec4 calculateCurlColor(vec2 uv, vec2 curlAxisLinePoint, vec2 mouseDir, float dist, float aspect, float curlDirection) {
+    if (curlDirection == -1.0) {
+        // 从右往左翻页
+        float theta = asin(dist / radius); // 计算角度
+        vec2 p2 = curlAxisLinePoint + mouseDir * (pi - theta) * radius; // 计算p2点
+        vec2 p1 = curlAxisLinePoint + mouseDir * theta * radius; // 计算p1点
+        if (p2.x <= aspect && p2.y <= 1.0 && p2.x > 0.0 && p2.y > 0.0) {
+            vec4 color = texture(iChannel0, p2 * vec2(1.0 / aspect, 1.0)); // 采样正面纹理
+            color.rgb = mix(color.rgb, vec3(1.0), 0.25); // 混合高光
+            color.rgb *= pow(clamp((radius - dist) / radius, 0.0, 1.0), 0.2); // 调整亮度
+            return color; // 返回颜色
+        } else {
+            vec4 color = texture(iChannel0, p1 * vec2(1.0 / aspect, 1.0)); // 采样正面纹理
+            if (p2.x <= aspect + shadowWidth && p2.y <= 1.0 + shadowWidth && p2.x > 0.0 - shadowWidth && p2.y > 0.0 - shadowWidth) {
+                float shadow = calShadow(p2, aspect); // 计算阴影
+                color = vec4(color.r * shadow, color.g * shadow, color.b * shadow, color.a); // 应用阴影
+            }
+            return color; // 返回颜色
         }
-        return color; // 返回颜色
+    } else {
+        // 从左往右翻页
+        float theta = asin(dist / radius); // 计算角度
+        vec2 p2 = curlAxisLinePoint + mouseDir * (pi - theta) * radius; // 计算p2点
+        vec2 p1 = curlAxisLinePoint + mouseDir * theta * radius; // 计算p1点
+        if (p2.x <= aspect && p2.y <= 1.0 && p2.x > 0.0 && p2.y > 0.0) {
+            vec4 color = texture(iChannel0, p2 * vec2(1.0 / aspect, 1.0)); // 采样正面纹理
+            color.rgb = mix(color.rgb, vec3(1.0), 0.25); // 混合高光
+            color.rgb *= pow(clamp((radius - dist) / radius, 0.0, 1.0), 0.2); // 调整亮度
+            return color; // 返回颜色
+        } else {
+            vec4 color = texture(iChannel0, p1 * vec2(1.0 / aspect, 1.0)); // 采样正面纹理
+            if (p2.x <= aspect + shadowWidth && p2.y <= 1.0 + shadowWidth && p2.x > 0.0 - shadowWidth && p2.y > 0.0 - shadowWidth) {
+                float shadow = calShadow(p2, aspect); // 计算阴影
+                color = vec4(color.r * shadow, color.g * shadow, color.b * shadow, color.a); // 应用阴影
+            }
+            return color; // 返回颜色
+        }
     }
 }
 
@@ -236,21 +255,40 @@ vec4 calculateCurlColor(vec2 uv, vec2 curlAxisLinePoint, vec2 mouseDir, float di
  * @param mouseDir 鼠标方向
  * @param dist 距离
  * @param aspect 宽高比
+ * @param curlDirection 翻页方向
  * @return 正面颜色
  */
-vec4 calculateFrontColor(vec2 uv, vec2 curlAxisLinePoint, vec2 mouseDir, float dist, float aspect) {
-    vec2 p = curlAxisLinePoint + mouseDir * (abs(dist) + pi * radius); // 计算映射点
-    if (p.x <= aspect && p.y <= 1.0 && p.x > 0.0 && p.y > 0.0) {
-        vec4 color = texture(iChannel0, p * vec2(1.0 / aspect, 1.0)); // 采样正面纹理
-        color.rgb = mix(color.rgb, vec3(1.0), 0.25); // 混合高光
-        return color; // 返回颜色
-    } else {
-        vec4 color = texture(iChannel0, uv * vec2(1.0 / aspect, 1.0)); // 采样正面纹理
-        if (p.x <= aspect + shadowWidth && p.y <= 1.0 + shadowWidth && p.x > 0.0 - shadowWidth && p.y > 0.0 - shadowWidth) {
-            float shadow = calShadow(p, aspect); // 计算阴影
-            color = vec4(color.r * shadow, color.g * shadow, color.b * shadow, color.a); // 应用阴影
+vec4 calculateFrontColor(vec2 uv, vec2 curlAxisLinePoint, vec2 mouseDir, float dist, float aspect, float curlDirection) {
+    if (curlDirection == -1.0) {
+        // 从右往左翻页
+        vec2 p = curlAxisLinePoint + mouseDir * (abs(dist) + pi * radius); // 计算映射点
+        if (p.x <= aspect && p.y <= 1.0 && p.x > 0.0 && p.y > 0.0) {
+            vec4 color = texture(iChannel0, p * vec2(1.0 / aspect, 1.0)); // 采样正面纹理
+            color.rgb = mix(color.rgb, vec3(1.0), 0.25); // 混合高光
+            return color; // 返回颜色
+        } else {
+            vec4 color = texture(iChannel0, uv * vec2(1.0 / aspect, 1.0)); // 采样正面纹理
+            if (p.x <= aspect + shadowWidth && p.y <= 1.0 + shadowWidth && p.x > 0.0 - shadowWidth && p.y > 0.0 - shadowWidth) {
+                float shadow = calShadow(p, aspect); // 计算阴影
+                color = vec4(color.r * shadow, color.g * shadow, color.b * shadow, color.a); // 应用阴影
+            }
+            return color; // 返回颜色
         }
-        return color; // 返回颜色
+    } else {
+        // 从左往右翻页
+        vec2 p = curlAxisLinePoint + mouseDir * (abs(dist) + pi * radius); // 计算映射点
+        if (p.x <= aspect && p.y <= 1.0 && p.x > 0.0 && p.y > 0.0) {
+            vec4 color = texture(iChannel0, p * vec2(1.0 / aspect, 1.0)); // 采样正面纹理
+            color.rgb = mix(color.rgb, vec3(1.0), 0.25); // 混合高光
+            return color; // 返回颜��
+        } else {
+            vec4 color = texture(iChannel0, uv * vec2(1.0 / aspect, 1.0)); // 采样正面纹理
+            if (p.x <= aspect + shadowWidth && p.y <= 1.0 + shadowWidth && p.x > 0.0 - shadowWidth && p.y > 0.0 - shadowWidth) {
+                float shadow = calShadow(p, aspect); // 计算阴影
+                color = vec4(color.r * shadow, color.g * shadow, color.b * shadow, color.a); // 应用阴影
+            }
+            return color; // 返回颜色
+        }
     }
 }
 
@@ -283,11 +321,11 @@ void main() {
     vec2 trackStartPoint;
     if (iCurlDirection == -1.0) {
         // 从右往左翻页，轨道圆中心在左侧
-        trackStartPoint = vec2(0.0, cornerFrom.y);
+        trackStartPoint = vec2(0.0, cornerFrom.y == 0.0 ? 0.0 : 1.0);
         mouse = handleRightToLeftCurl(mouse, cornerFrom, aspect); // 右往左翻页约束
     } else {
         // 从左往右翻页，轨道圆中心就是起始角落
-        trackStartPoint = cornerFrom;
+        trackStartPoint = vec2(aspect, cornerFrom.y == 0.0 ? 1.0 : 0.0);
         mouse = handleLeftToRightCurl(mouse, cornerFrom, aspect); // 左往右翻页约束
     }
 
@@ -312,11 +350,11 @@ void main() {
 
     // 计算翻页的圆柱体映射点并选择合适的纹理
     if (dist > radius) {
-        fragColor = calculateBacksideColor(uv, dist, aspect); // 背面区域
+        fragColor = calculateBacksideColor(uv, dist, aspect, iCurlDirection); // 背面区域
     } else if (dist >= 0.0) {
-        fragColor = calculateCurlColor(uv, curlAxisLinePoint, mouseDir, dist, aspect); // 弯曲区域
+        fragColor = calculateCurlColor(uv, curlAxisLinePoint, mouseDir, dist, aspect, iCurlDirection); // 弯曲区域
     } else {
-        fragColor = calculateFrontColor(uv, curlAxisLinePoint, mouseDir, dist, aspect); // 正面区域
+        fragColor = calculateFrontColor(uv, curlAxisLinePoint, mouseDir, dist, aspect, iCurlDirection); // 正面区域
     }
 
     // 绘制限制轨道圆 - 用绿色显示轨道
