@@ -4,12 +4,12 @@ uniform vec2 iResolution; // 渲染分辨率
 uniform vec4 iMouse; // 鼠标位置和状态 xy: 鼠标位置, zw: 鼠标起始点击位置
 uniform sampler2D iChannel0; // 正面纹理
 uniform sampler2D iChannel1; // 背面纹理
-uniform float iCurlDirection; // 翻页方向：1.0 表示从右往左，-1.0 表示从左往右
+uniform float iCurlDirection; // 翻页方向：1.0 表示从左向右翻页，-1.0 表示从右向左翻页
 
-#define pi 3.14159265359
-#define radius 0.05
-#define shadowWidth 0.02
-#define TRANSPARENT vec4(0.0, 0.0, 0.0, 0.0)
+#define pi 3.14159265359 // 圆周率
+#define radius 0.05 // 翻页曲率半径
+#define shadowWidth 0.02 // 阴影宽度
+#define TRACK_LINE_THICKNESS 0.002 // 轨道线的厚度
 
 out vec4 fragColor;
 
@@ -75,12 +75,15 @@ vec2 pointOnCircle(vec2 center, vec2 startPoint, float currentRadius, float arcL
  * @return 起始角落坐标
  */
 vec2 getCornerFrom(float aspect, float curlDirection, float startMouseY) {
+    // 根据鼠标在屏幕上半部分还是下半部分来决定起始角落
+    float halfHeight = iResolution.y / 2.0; // 半屏高度
+
     if (curlDirection == -1.0) {
         // 从右往左翻页
-        return (startMouseY < iResolution.y / 2) ? vec2(aspect, 0.0) : vec2(aspect, 1.0);
+        return startMouseY < halfHeight ? vec2(aspect, 0.0) : vec2(aspect, 1.0);
     } else {
         // 从左往右翻页
-        return (startMouseY < iResolution.y / 2) ? vec2(0.0, 0.0) : vec2(0.0, 1.0);
+        return startMouseY < halfHeight ? vec2(0.0, 0.0) : vec2(0.0, 1.0);
     }
 }
 
@@ -118,11 +121,25 @@ vec2 handleRightToLeftCurl(vec2 mouse, vec2 cornerFrom, float aspect) {
  * @return 约束后的鼠标坐标
  */
 vec2 handleLeftToRightCurl(vec2 mouse, vec2 cornerFrom, float aspect) {
-    vec2 startPoint = vec2(aspect, cornerFrom.y == 0.0 ? 0.0 : 1.0); // 起始点
+    vec2 startPoint = cornerFrom; // 直接使用cornerFrom作为起始点
+
     if (distance(mouse.xy, startPoint) <= aspect) {
         return mouse; // 在允许范围内直接返回
     }
-    vec2 vector = normalize(vec2(-0.5, 0.5 * tan(pi / 3))); // 基准向量
+    
+    // 根据起始角落调整基准向量
+    vec2 vector;
+    bool clockwise;
+    if (cornerFrom.y == 0.0) {
+        // 从左上角开始，向右下方向
+        vector = normalize(vec2(0.5, 0.5 * tan(pi / 3)));
+        clockwise = mouse.y >= tan(pi / 3) * mouse.x;
+    } else {
+        // 从左下角开始，向右上方向
+        vector = normalize(vec2(0.5, -0.5 * tan(pi / 3)));
+        clockwise = mouse.y <= (1.0 - tan(pi / 3) * mouse.x);
+    }
+    
     vec2 targetMouse = mouse.xy; // 目标鼠标
     vec2 v = targetMouse - startPoint; // 向量差
     float proj_length = dot(v, vector); // 投影长度
@@ -131,7 +148,7 @@ vec2 handleLeftToRightCurl(vec2 mouse, vec2 cornerFrom, float aspect) {
     float arc_distance = distance(targetMouse, startPoint) - aspect; // 到弧线距离
     float actual_distance = min(abs(base_line_distance), abs(arc_distance)); // 取较小距离
     vec2 currentMouse_arc_proj = startPoint + normalize(mouse - startPoint) * aspect; // 弧线上的映射点
-    return pointOnCircle(startPoint, currentMouse_arc_proj, aspect, actual_distance / 2, mouse.y <= tan(pi / 3) * (aspect - mouse.x)); // 返回圆上的点
+    return pointOnCircle(startPoint, currentMouse_arc_proj, aspect, actual_distance / 2, clockwise); // 返回圆上的点
 }
 
 /**
@@ -148,7 +165,8 @@ vec2 getMouseDirection(float curlDirection, vec2 cornerFrom, vec2 mouse, float a
         return normalize(abs(cornerFrom * iResolution.xy / vec2(aspect, 1.0)) - mouse);
     } else {
         // 从左往右翻页
-        return normalize(mouse - abs(cornerFrom * iResolution.xy / vec2(aspect, 1.0)));
+        vec2 corner = cornerFrom * iResolution.xy / vec2(aspect, 1.0);
+        return normalize(mouse - corner);
     }
 }
 
@@ -237,20 +255,39 @@ vec4 calculateFrontColor(vec2 uv, vec2 curlAxisLinePoint, vec2 mouseDir, float d
 }
 
 /**
+ * 绘制限制轨道圆
+ * @param uv 纹理坐标
+ * @param center 圆心
+ * @param arcRadius 圆弧��径
+ * @param aspect 宽高比
+ * @return 是否在轨道线上
+ */
+bool drawTrackCircle(vec2 uv, vec2 center, float arcRadius, float aspect) {
+    float dist = distance(uv, center);
+    return abs(dist - arcRadius) < TRACK_LINE_THICKNESS;
+}
+
+/**
  * 主函数，计算每个像素的颜色
  */
 void main() {
     vec2 fragCoord = FlutterFragCoord().xy; // 获取像素坐标
     float aspect = iResolution.x / iResolution.y; // 计算宽高比
-    vec2 uv = fragCoord * vec2(aspect, 1.0) / iResolution.xy; // 归一化纹理坐标
+    vec2 uv = fragCoord * vec2(aspect, 1.) / iResolution.xy; // 归一化纹理坐标
 
-    vec2 cornerFrom = getCornerFrom(aspect, iCurlDirection, iMouse.w); // 获取翻页起始角落位置
+    // 获取翻页起始角落位置（注意：iMouse.w是初始触摸点的y坐标）
+    vec2 cornerFrom = getCornerFrom(aspect, iCurlDirection, iMouse.w);
 
-    vec2 mouse = iMouse.xy * vec2(aspect, 1.0) / iResolution.xy; // 归一化鼠标坐标
-
+    // 归一化鼠标坐标
+    vec2 mouse = iMouse.xy * vec2(aspect, 1.0) / iResolution.xy;    // 确定翻页轨迹的起始点
+    vec2 trackStartPoint;
     if (iCurlDirection == -1.0) {
+        // 从右往左翻页，轨道圆中心在左侧
+        trackStartPoint = vec2(0.0, cornerFrom.y);
         mouse = handleRightToLeftCurl(mouse, cornerFrom, aspect); // 右往左翻页约束
     } else {
+        // 从左往右翻页，轨道圆中心就是起始角落
+        trackStartPoint = cornerFrom;
         mouse = handleLeftToRightCurl(mouse, cornerFrom, aspect); // 左往右翻页约束
     }
 
@@ -280,5 +317,10 @@ void main() {
         fragColor = calculateCurlColor(uv, curlAxisLinePoint, mouseDir, dist, aspect); // 弯曲区域
     } else {
         fragColor = calculateFrontColor(uv, curlAxisLinePoint, mouseDir, dist, aspect); // 正面区域
+    }
+
+    // 绘制限制轨道圆 - 用绿色显示轨道
+    if (drawTrackCircle(uv, trackStartPoint, aspect, aspect)) {
+        fragColor = vec4(0.0, 1.0, 0.0, 1.0); // 绿色轨道线
     }
 }

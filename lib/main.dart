@@ -198,8 +198,8 @@ class ShaderPainter extends CustomPainter {
     shader.setImageSampler(1, backImage); // iBackImage
 
     // 判断是否从左向右翻页或从右向左翻页
-    // 1.0表示从左向右翻页，-1.0表示从右向左翻页
-    final iCurlDirection = mousePos.dx - mouseStart.dx;
+    // 1.0 表示从左向右翻页，-1.0 表示从右向左翻页
+    final iCurlDirection = mouseStart.dx > size.width / 2 ? -1.0 : 1.0;
     if (isDragging) {
       shader.setFloat(
         6,
