@@ -5,16 +5,10 @@ Contact: tamby@tambako.ch
 */
 uniform vec3 iResolution;           // 视口分辨率（像素）
 uniform float iTime;                // 着色器播放时间（秒）
-uniform float iTimeDelta;           // 渲染时间（秒）
-uniform float iFrameRate;           // 着色器帧率
-uniform int iFrame;                 // 着色器播放帧数
-uniform float iChannelTime[4];      // 通道播放时间（秒）
 uniform vec3 iChannelResolution[4]; // 通道分辨率（像素）
 uniform vec4 iMouse;                // 鼠标像素坐标。xy：当前（如果按下鼠标左键），zw：点击位置
 uniform sampler2D iChannel0;        // 输入通道。XX = 2D/Cube
 uniform sampler2D iChannel1;        // 输入通道。XX = 2D/Cube
-uniform sampler2D iChannel3;        // 输入通道。XX = 2D/Cube
-uniform vec4 iDate;                 // （年，月，日，秒）
 
 // 数学常量
 const float pi = 3.14159;
@@ -50,30 +44,17 @@ const int aasamples = 3;      // 抗锯齿采样数
 
 // 调试开关
 const bool showpoints = false; // 是否显示控制点
-const bool colors = false;     // 是否使用纯色代替纹理
-const bool anim = true;        // 是否启用自动动画
 
 // 简单随机数生成器
 float random(float co) {
     return fract(sin(co * 12.989) * 43758.545);
 }
 
-// 获取页面背景颜色（随时间变化）
+// 获取页面背景颜色
 vec4 getPagebackColor() {
-    float cn;
-    // 根据时间或鼠标状态决定颜色索引
-    if (iMouse.x == 0. && iMouse.y == 0. && anim)
-    cn = floor(iTime / 3.5);
-    else
-    cn = 1.0;
-
-    vec4 pagebackColor;
-    // 为RGB通道生成不同的随机颜色值
-    pagebackColor.r = maxBcolVal * random(cn + 263.714);
-    pagebackColor.g = maxBcolVal * random(cn * 4. - 151.894);
-    pagebackColor.b = maxBcolVal * random(cn * 7. + 87.548);
-    pagebackColor.a = 1.0;
-    return pagebackColor;
+    // 透明颜色
+    vec4 col = vec4(0.0, 0.0, 0.0, 0.0);
+    return col;
 }
 
 // 2D向量旋转函数
@@ -101,22 +82,10 @@ vec4 turnPage(vec2 fragCoord) {
 
     // 确定翻页控制点（鼠标或自动动画）
     vec2 mpoint;
-    bool firstcycle;
     vec4 Mouse2 = iMouse;
 
     // 自动动画模式
-    if (iMouse.x == 0. && iMouse.y == 0. && anim) {
-        firstcycle = mod(iTime / 3.5, 2.) < 1.; // 判断当前翻页周期
-        // 计算自动移动的控制点轨迹
-        mpoint = vec2(mod(iTime / 3.5, 1.) * iResolution.x * 2.0,
-        pow(mod(iTime / 3.5, 1.), 2.5) * iResolution.y / 1.2 +
-        8. * smoothstep(0., 0.07, mod(iTime / 3.5, 1.)));
-    }
-    // 鼠标控制模式
-    else {
-        mpoint = Mouse2.xy;
-        firstcycle = true;
-    }
+    mpoint = Mouse2.xy;
 
     // 计算中间点和距离
     vec2 midmpoint = mpoint * 0.5;
@@ -173,11 +142,7 @@ vec4 turnPage(vec2 fragCoord) {
             difft = difft * (shadow * shadowint + 1. - shadowint) / 2. +
             mix(1. - shadowint, difft, shadow) / 2.;
 
-            // 根据翻页周期选择纹理
-            if (firstcycle)
-                i = difft*(colors?vec4(1., 0.3, 0.3, 1.):texture(iChannel0, mod((uvr3b - uvrcorr3)/vec2(-ratio, 1.), 1.)));
-            else
-                i = difft*(colors?vec4(1., 0.3, 0.3, 1.):texture(iChannel1, mod((uvr3b - uvrcorr3)/vec2(-ratio, 1.), 1.)));
+            i = difft * (texture(iChannel0, mod((uvr3b - uvrcorr3) / vec2(-ratio, 1.), 1.)));
         }
         // 翻页底部区域处理
         else {
@@ -188,13 +153,8 @@ vec4 turnPage(vec2 fragCoord) {
                              smoothstep(specpos.x + 0.35, specpos.x, intfac), specpow);
             spec *= specint * pow(1. - pow(clamp(abs(uvr.y - specpos.y), 0., specwidth * 2.), 2.) / specwidth, specpow);
 
-            // 根据翻页周期选择纹理
-            if (firstcycle)
-            i = diffb * (colors ? vec4(0.3, 1.0, 0.3, 1.) : mix(texture(iChannel0, mod((uvr3 - uvrcorr3) / vec2(-ratio, 1.), 1.)),
-                                                                getPagebackColor(), bcolorMix));
-            else
-            i = diffb * (colors ? vec4(0.3, 1.0, 0.3, 1.) : mix(texture(iChannel1, mod((uvr3 - uvrcorr3) / vec2(-ratio, 1.), 1.)),
-                                                                getPagebackColor(), bcolorMix));
+            i = diffb * (mix(texture(iChannel0, mod((uvr3 - uvrcorr3) / vec2(-ratio, 1.), 1.)),
+                             getPagebackColor(), bcolorMix));
             // 添加高光效果
             i = mix(i, vec4(1.0), spec);
         }
@@ -230,11 +190,7 @@ vec4 turnPage(vec2 fragCoord) {
         float intfacbg = 1. - diffint * (1. - 1. / pagefuncderbg);
         float difftbg = intfacbg * (1. - ambientt) + ambientt;
 
-        // 根据翻页周期选择背景纹理
-        if (firstcycle)
-        i = colors ? difftbg * vec4(0.3, 0.3, 1., 1.) : texture(iChannel1, mod((uvr3bbg - uvrcorr3bg) / vec2(-ratio, 1.), 1.));
-        else
-        i = colors ? difftbg * vec4(0.3, 0.3, 1., 1.) : texture(iChannel0, mod((uvr3bbg - uvrcorr3bg) / vec2(-ratio, 1.), 1.));
+        i = texture(iChannel1, mod((uvr3bbg - uvrcorr3bg) / vec2(-ratio, 1.), 1.));
 
         // 添加背景阴影
         float bgshadow = 1. + shadowint * smoothstep(-0.08 + shadowsmoothness * 4., -0.08, uvr3b.y) - shadowint;
