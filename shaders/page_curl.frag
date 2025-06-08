@@ -13,18 +13,32 @@ uniform sampler2D iChannel1; // 背面纹理
 // 定义翻页方向控制变量
 uniform float iCurlDirection; // 翻页方向：1.0 表示从左向右翻页，-1.0 表示从右向左翻页
 
-// 定义数学常数圆周率
-#define pi 3.14159265359 // 圆周率
+// 定义数学常数圆周率（注意：这会覆盖第16行的pi定义）
+const float pi = 3.14159265359; // 圆周率
 // 定义翻页效果的曲率半径
-#define radius 0.05 // 翻页曲率半径
+const float radius = 0.05; // 翻页曲率半径
 // 定义阴影效果的宽度
-#define shadowWidth 0.02 // 阴影宽度
+const float shadowWidth = 0.02; // 阴影宽度
 // 定义轨道线的显示厚度
-#define TRACK_LINE_THICKNESS 0.002 // 轨道线的厚度
+const float trackLineThickness = 0.002; // 轨道线的厚度
 // 定义调试点的显示大小
-#define POINT_SIZE 0.01 // 点的大小
+const float pointSize = 0.01; // 点的大小
 // 定义调试线条的显示厚度
-#define LINE_THICKNESS 0.003 // 线条厚度
+const float lineThickness = 0.003; // 线条厚度
+
+// 阴影参数
+const vec2 shadowOffset = vec2(0.005, -0.003); // 阴影偏移
+const float shadowIntensity = 0.3;             // 阴影强度
+
+// 抗锯齿参数
+// 抗锯齿采样数（2x2 = 4个采样点）
+const int aasamples = 3;
+// 抗锯齿采样范围
+// 每个采样点的宽度
+const float aawidth = 0.7;
+
+// 显示调试信息的开关
+const bool showDebug = true; // 是否显示调试信息
 
 // 定义片段着色器输出颜色
 out vec4 fragColor;
@@ -43,7 +57,7 @@ bool drawTrackCircle(vec2 uv, vec2 center, float arcRadius, float aspect) {
     // 计算当前点到圆心的距离
     float dist = distance(uv, center);
     // 判断距离是否接近圆弧半径，在误差范围内则认为在轨道线上
-    return abs(dist - arcRadius) < TRACK_LINE_THICKNESS;
+    return abs(dist - arcRadius) < trackLineThickness;
 }
 
 /**
@@ -55,7 +69,7 @@ bool drawTrackCircle(vec2 uv, vec2 center, float arcRadius, float aspect) {
  */
 bool drawPoint(vec2 uv, vec2 point) {
     // 判断当前位置是否在指定点的显示范围内
-    return distance(uv, point) < POINT_SIZE;
+    return distance(uv, point) < pointSize;
 }
 
 /**
@@ -76,7 +90,7 @@ bool drawLine(vec2 uv, vec2 start, vec2 end) {
     // 计算线段上距离当前点最近的点
     vec2 closestPoint = start + t * line;
     // 判断当前点是否在线段的显示厚度范围内
-    return distance(uv, closestPoint) < LINE_THICKNESS;
+    return distance(uv, closestPoint) < lineThickness;
 }
 
 /**
@@ -86,7 +100,7 @@ bool drawLine(vec2 uv, vec2 start, vec2 end) {
  * @param center 圆心
  * @param direction 基准方向
  * @param angleRange 角度范围（弧度）
- * @param radius 半径
+ * @param radiusLimit 半径限制
  * @return 是否在扇形边界上
  */
 bool drawAngleRange(vec2 uv, vec2 center, vec2 direction, float angleRange, float radiusLimit) {
@@ -109,7 +123,7 @@ bool drawAngleRange(vec2 uv, vec2 center, vec2 direction, float angleRange, floa
     float cross = normalizedToUv.x * normalizedDir.y - normalizedToUv.y * normalizedDir.x;
 
     // 判断是否在扇形的两个边界线上，并且距离接近半径限制
-    return (abs(angle - angleRange) < 0.05 || abs(angle + angleRange) < 0.05) && abs(dist - radiusLimit) < LINE_THICKNESS * 2.0;
+    return (abs(angle - angleRange) < 0.05 || abs(angle + angleRange) < 0.05) && abs(dist - radiusLimit) < lineThickness * 2.0;
 }
 
 /**
@@ -119,7 +133,7 @@ bool drawAngleRange(vec2 uv, vec2 center, vec2 direction, float angleRange, floa
  * @param center 圆心
  * @param direction 基准方向
  * @param angleRange 角度范围（弧度）
- * @param radius 半径
+ * @param radiusLimit 半径限制
  * @return 是否在扇形区域内
  */
 bool isInAngleRange(vec2 uv, vec2 center, vec2 direction, float angleRange, float radiusLimit) {
@@ -143,31 +157,44 @@ bool isInAngleRange(vec2 uv, vec2 center, vec2 direction, float angleRange, floa
 }
 
 /**
- * 计算阴影强度
- * 根据目标点的位置计算阴影的强度值
- * @param targetPoint 目标点
+ * 计算改进的阴影强度
+ * 使用平滑过渡和偏移的高级阴影算法
+ * @param targetPoint 目标点位置
  * @param aspect 宽高比
- * @return 返回阴影强度
+ * @return 返回阴影强度 (0.0 = 完全阴影, 1.0 = 无阴影)
  */
-float calShadow(vec2 targetPoint, float aspect) {
-    // 判断目标点是否在页面上方
-    if (targetPoint.y >= 1.0) {
-        // 计算y方向超出上边界的阴影强度
-        // 计算x方向超出右边界的阴影强度
-        // 返回两个方向阴影强度的最大值
-        return max(
-            pow(clamp((targetPoint.y - 1.0) / shadowWidth, 0.0, 0.9), 0.2),
-            pow(clamp((targetPoint.x - aspect) / shadowWidth, 0.0, 0.9), 0.2)
-        );
-    } else {
-        // 计算y方向超出下边界的阴影强度
-        // 计算x方向超出右边界的阴影强度
-        // 返回两个方向阴影强度的最大值
-        return max(
-            pow(clamp((0.0 - targetPoint.y) / shadowWidth, 0.0, 0.9), 0.2),
-            pow(clamp((targetPoint.x - aspect) / shadowWidth, 0.0, 0.9), 0.2)
-        );
+float calculateAdvancedShadow(vec2 targetPoint, float aspect) {
+    // 计算阴影偏移后的位置
+    vec2 shadowPoint = targetPoint + shadowOffset;
+
+    // 检查是否在页面边界外
+
+    if (!(shadowPoint.x < 0.0 || shadowPoint.x > aspect || shadowPoint.y < 0.0 || shadowPoint.y > 1.0)) {
+        return 1.0; // 在边界内，无阴影
     }
+
+    // 计算到边界的距离
+    float distToBoundary = 0.0;
+
+    // X方向边界距离
+    if (shadowPoint.x < 0.0) {
+        distToBoundary = max(distToBoundary, abs(shadowPoint.x));
+    } else if (shadowPoint.x > aspect) {
+        distToBoundary = max(distToBoundary, shadowPoint.x - aspect);
+    }
+
+    // Y方向边界距离
+    if (shadowPoint.y < 0.0) {
+        distToBoundary = max(distToBoundary, abs(shadowPoint.y));
+    } else if (shadowPoint.y > 1.0) {
+        distToBoundary = max(distToBoundary, shadowPoint.y - 1.0);
+    }
+
+    // 使用平滑步进函数创建渐变阴影
+    float shadowFactor = 1.0 - smoothstep(0.0, shadowWidth, distToBoundary);
+
+    // 应用阴影强度并确保最小亮度
+    return mix(1.0 - shadowIntensity, 1.0, 1.0 - shadowFactor);
 }
 
 /**
@@ -265,39 +292,18 @@ bool isInShadowBounds(vec2 p, float aspect, float direction) {
 }
 
 /**
- * 应用高光和亮度调整
- * 对颜色应用高光效果和亮度调整以增强视觉效果
- * @param color 原始颜色
- * @param highlight 是否应用高光
- * @param brightness 亮度调整因子
- * @return 处理后的颜色
+ * 核心翻页渲染函数
+ * 计算单个采样点的翻页效果颜色
+ * @param fragCoord 片段坐标
+ * @return 渲染结果颜色
  */
-vec4 applyLighting(vec4 color, bool highlight, float brightness) {
-    // 如果需要应用高光效果
-    if (highlight) {
-        // 将原色与白色混合，产生高光效果
-        color.rgb = mix(color.rgb, vec3(1.0), 0.25);
-    }
-    // 如果亮度因子小于1.0，则降低颜色亮度
-    if (brightness < 1.0) {
-        // 将RGB分量乘以亮度因子
-        color.rgb *= brightness;
-    }
-    // 返回处理后的颜色
-    return color;
-}
-
-/**
- * 主函数，计算每个像素的颜色
- * 着色器的入口函数，负责计算翻页效果的每个像素颜色
- */
-void main() {
-    // 获取当前片段的屏幕坐标
-    vec2 fragCoord = FlutterFragCoord().xy; // 获取像素坐标
+vec4 renderPageCurl(vec2 fragCoord) {
     // 计算屏幕的宽高比
     float aspect = iResolution.x / iResolution.y; // 计算宽高比
     // 将屏幕坐标转换为归一化的纹理坐标
     vec2 uv = fragCoord * vec2(aspect, 1.0) / iResolution.xy; // 归一化纹理坐标
+
+//    vec2 cornerFrom = (currentMouse.w<resolution.y/2)?vec2(aspect, 0.0):vec2(aspect, 1.0);
 
     // 获取翻页起始角落位置
     // 计算屏幕高度的一半，用于判断鼠标在上半部分还是下半部分
@@ -342,16 +348,16 @@ void main() {
     // 为纹理采样准备共享的纹理坐标
     vec2 texCoord = toTexCoord(uv, aspect);
 
+    // 声明结果颜色
+    vec4 result;
+
     // 计算翻页的圆柱体映射点并选择合适的纹理
     // 判断当前点位于翻页效果的哪个区域
     if (dist > radius) {
         // 背面区域 - 显示背面纹理
         // 从背面纹理采样颜色
-        vec4 color = texture(iChannel1, texCoord);
-        // 计算背面区域的亮度衰减效果
-        float brightness = pow(clamp(dist - radius, 0.0, 1.0) * 1.5, 0.2);
-        // 应用亮度调整并输出最终颜色
-        fragColor = applyLighting(color, false, brightness);
+        result = texture(iChannel1, texCoord);
+        result.rgb *= pow(clamp(dist - radius, 0., 1.) * 1.5, .2); // 距离越远越暗
     } else if (dist >= 0.0) {
         // 弯曲区域 - 翻页过渡区域
         // 计算弯曲角度
@@ -364,57 +370,102 @@ void main() {
         bool useP2 = isInBounds(p2, aspect);
         vec2 samplePoint = useP2 ? p2 : p1;
         // 从正面纹理采样颜色
-        vec4 color = texture(iChannel0, toTexCoord(samplePoint, aspect));
+        result = texture(iChannel0, toTexCoord(samplePoint, aspect));
+        result.rgb *= pow(clamp((radius - dist) / radius, 0.0, 1.0), 0.2); // 根据曲率调整亮度
 
-        // 根据使用的映射点应用不同的光照效果
-        if (useP2) {
-            // 在有效范围内，应用高光和亮度调整
-            float brightness = pow(clamp((radius - dist) / radius, 0.0, 1.0), 0.2);
-            fragColor = applyLighting(color, true, brightness);
-        } else {
+        // 检查是否在阴影范围内
+        if (!useP2) {
             // 超出范围，检查是否需要应用阴影效果
+            float shadowFactor = 1.0;
             if (isInShadowBounds(p2, aspect, iCurlDirection)) {
-                // 计算阴影强度
-                float shadow = calShadow(p2, aspect);
-                // 应用阴影效果到颜色
-                color = vec4(color.rgb * shadow, color.a);
+                // 计算改进的阴影强度
+                shadowFactor = calculateAdvancedShadow(p2, aspect);
             }
-            // 输出处理后的颜色
-            fragColor = color;
+            // 应用光照和阴影
+            result *= shadowFactor; // 应用阴影强度
         }
     } else {
         // 正面区域 - 显示正面纹理
         // 计算正面区域映射后的位置
         vec2 p = curlAxisLinePoint + mouseDir * (abs(dist) + pi * radius);
-
+        bool isInBoundsP = isInBounds(p, aspect);
+        result = isInBoundsP ? texture(iChannel0, toTexCoord(p, aspect)) : texture(iChannel0, texCoord);
         // 判断映射位置是否在有效范围内
-        if (isInBounds(p, aspect)) {
-            // 在有效范围内，从正面纹理采样并应用高光
-            vec4 color = texture(iChannel0, toTexCoord(p, aspect));
-            fragColor = applyLighting(color, true, 1.0);
-        } else {
-            // 超出有效范围，使用原始UV坐标采样
-            vec4 color = texture(iChannel0, texCoord);
-            // 检查是否需要应用阴影效果
+        if (!isInBoundsP) {
+            float shadowFactor = 1.0;
             if (isInShadowBounds(p, aspect, iCurlDirection)) {
-                // 计算并应用阴影强度
-                float shadow = calShadow(p, aspect);
-                color = vec4(color.rgb * shadow, color.a);
+                // 计算改进的阴影强度
+                shadowFactor = calculateAdvancedShadow(p, aspect);
             }
-            // 输出最终颜色
-            fragColor = color;
+            result *= shadowFactor; // 应用阴影强度
         }
     }
 
-    // 画origin点
-    // 如果当前像素位于翻页起点附近，则用绿色高亮显示
-    if (drawPoint(uv, origin)) {
-        fragColor = vec4(0.0, 1.0, 0.0, 1.0); // 绿色 - 翻页起点
+    return result;
+}
+
+/**
+ * 主函数，计算每个像素的颜色（带抗锯齿）
+ * 着色器的入口函数，负责计算翻页效果的每个像素颜色
+ */
+void main() {
+    // 获取当前片段的屏幕坐标
+    vec2 fragCoord = FlutterFragCoord().xy;
+
+    // 抗锯齿处理：多重采样
+    vec4 vs = vec4(0.0);
+    int totalSamples = aasamples * aasamples;
+
+    for (int j = 0; j < aasamples; j++) {
+        float oy = float(j) * aawidth / max(float(aasamples - 1), 1.0);
+        for (int i = 0; i < aasamples; i++) {
+            float ox = float(i) * aawidth / max(float(aasamples - 1), 1.0);
+            // 对每个子像素位置进行采样
+            vs += renderPageCurl(fragCoord + vec2(ox, oy));
+        }
     }
 
-    // 绘制调试用的翻页轴线
-    // 如果当前像素位于轴线上，则用粉色高亮显示
-    if (drawLine(uv, curlAxisLinePoint, mouse)) {
-        fragColor = vec4(1.0, 0.5, 0.5, 1.0); // 粉色 - 翻页轴线
+    // 平均所有采样结果
+    vs = vs / vec4(aasamples * aasamples);
+
+    if (showDebug) {
+        // 计算用于调试显示的坐标
+        float aspect = iResolution.x / iResolution.y;
+        vec2 uv = fragCoord * vec2(aspect, 1.0) / iResolution.xy;
+        vec2 mouse = iMouse.xy * vec2(aspect, 1.0) / iResolution.xy;
+        vec2 mouseDir = normalize(abs(iMouse.zw) - iMouse.xy);
+
+        // 计算翻页原点
+        vec2 origin;
+        if (iCurlDirection == -1.0) {
+            origin = clamp(mouse - mouseDir * mouse.x / mouseDir.x, 0.0, 1.0);
+        } else {
+            origin = clamp(mouse - mouseDir * (mouse.x - aspect) / mouseDir.x, 0.0, 1.0);
+        }
+
+        // 计算翻页距离和轴线点
+        float mouseDist;
+        mouseDist = clamp(length(mouse - origin) +
+                          (aspect - (abs(iMouse.z) / iResolution.x) * aspect) / mouseDir.x, 0.0, aspect / mouseDir.x);
+        if (mouseDir.x < 0.) {
+            mouseDist = distance(mouse, origin);
+        }
+        float proj = dot(uv - origin, mouseDir);
+        float dist = proj - mouseDist;
+        vec2 curlAxisLinePoint = uv - dist * mouseDir;
+
+        // 调试显示（可选）
+        // 画origin点 - 用绿色高亮显示翻页起点
+        if (drawPoint(uv, origin)) {
+            vs = mix(vs, vec4(0.0, 1.0, 0.0, 1.0), 0.7);
+        }
+
+        // 绘制调试用的翻页轴线 - 用粉色高亮显示
+        if (drawLine(uv, curlAxisLinePoint, mouse)) {
+            vs = mix(vs, vec4(1.0, 0.0, 1.0, 1.0), 0.5);
+        }
     }
+
+    // 输出最终颜色
+    fragColor = vs;
 }
