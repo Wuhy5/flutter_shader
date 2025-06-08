@@ -32,7 +32,8 @@ const float shadowIntensity = 0.3;             // 阴影强度
 
 // 抗锯齿参数
 // 抗锯齿采样数（2x2 = 4个采样点）
-const int aasamples = 3;
+// 越高的值会增加抗锯齿效果，但也会增加计算开销
+const int aasamples = 1;
 // 抗锯齿采样范围
 // 每个采样点的宽度
 const float aawidth = 0.7;
@@ -319,13 +320,18 @@ vec4 renderPageCurl(vec2 fragCoord) {
     // 获取翻页辅助计算起点
     // 声明翻页效果的计算原点
     vec2 origin;
-    // 根据翻页方向计算翻页效果的原点位置
     if (iCurlDirection == -1.0) {
-        // 从右往左翻页时，计算原点并限制在有效范围内
-        origin = clamp(mouse - mouseDir * mouse.x / mouseDir.x, 0.0, 1.0);
+        // 从右向左翻页，origin在x=0边界
+        float t = -mouse.x / mouseDir.x;
+        origin = mouse + t * mouseDir;
+        origin.x = 0.0; // 确保x坐标在左边界
+        origin.y = clamp(origin.y, 0.0, 1.0); // 仅限制y坐标
     } else {
-        // 从左往右翻页时，计算原点并限制在有效范围内
-        origin = clamp(mouse - mouseDir * (mouse.x - aspect) / mouseDir.x, 0.0, 1.0);
+        // 从左向右翻页，origin在x=aspect边界
+        float t = (aspect - mouse.x) / mouseDir.x;
+        origin = mouse + t * mouseDir;
+        origin.x = aspect; // 确保x坐标在右边界
+        origin.y = clamp(origin.y, 0.0, 1.0); // 仅限制y坐标
     }
 
     // 计算鼠标位置到原点的距离
@@ -438,9 +444,17 @@ void main() {
         // 计算翻页原点
         vec2 origin;
         if (iCurlDirection == -1.0) {
-            origin = clamp(mouse - mouseDir * mouse.x / mouseDir.x, 0.0, 1.0);
+            // 从右向左翻页，origin在x=0边界
+            float t = -mouse.x / mouseDir.x;
+            origin = mouse + t * mouseDir;
+            origin.x = 0.0; // 确保x坐标在左边界
+            origin.y = clamp(origin.y, 0.0, 1.0); // 仅限制y坐标
         } else {
-            origin = clamp(mouse - mouseDir * (mouse.x - aspect) / mouseDir.x, 0.0, 1.0);
+            // 从左向右翻页，origin在x=aspect边界
+            float t = (aspect - mouse.x) / mouseDir.x;
+            origin = mouse + t * mouseDir;
+            origin.x = aspect; // 确保x坐标在右边界
+            origin.y = clamp(origin.y, 0.0, 1.0); // 仅限制y坐标
         }
 
         // 计算翻页距离和轴线点
@@ -458,11 +472,6 @@ void main() {
         // 画origin点 - 用绿色高亮显示翻页起点
         if (drawPoint(uv, origin)) {
             vs = mix(vs, vec4(0.0, 1.0, 0.0, 1.0), 0.7);
-        }
-
-        // 绘制调试用的翻页轴线 - 用粉色高亮显示
-        if (drawLine(uv, curlAxisLinePoint, mouse)) {
-            vs = mix(vs, vec4(1.0, 0.0, 1.0, 1.0), 0.5);
         }
     }
 
