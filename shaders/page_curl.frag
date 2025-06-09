@@ -35,9 +35,6 @@ const float shadowIntensity = 0.3;             // 阴影强度
 // 0: 无抗锯齿, 1: 优化MSAA, 2: 原始MSAA
 const int aaMode = 1;
 
-// 抗锯齿调试模式（显示哪些区域应用了AA）
-const bool aaDebugMode = false;
-
 // 原始MAAA抗锯齿参数
 // 抗锯齿采样数（2x2 = 4个采样点）
 // 越高的值会增加抗锯齿效果，但也会增加计算开销
@@ -321,7 +318,6 @@ vec4 renderPageCurl(vec2 fragCoord) {
     // 声明鼠标移动方向向量
     vec2 mouseDir = normalize(abs(iMouse.zw) - iMouse.xy);
 
-    // 获取翻页辅助计算起点
     // 声明翻页效果的计算原点
     vec2 origin;
     if (iCurlDirection == -1.0) {
@@ -470,16 +466,16 @@ void main() {
         vec2 mouse = iMouse.xy * vec2(aspect, 1.0) / iResolution.xy;
         vec2 mouseDir = normalize(abs(iMouse.zw) - iMouse.xy);
 
-        // 计算翻页原点
+        // 声明翻页效果的计算原点
         vec2 origin;
         if (iCurlDirection == -1.0) {
-            // 从右往左翻页，origin在x=0边界
+            // 从右向左翻页，origin在x=0边界
             float t = -mouse.x / mouseDir.x;
             origin = mouse + t * mouseDir;
             origin.x = 0.0; // 确保x坐标在左边界
             origin.y = clamp(origin.y, 0.0, 1.0); // 仅限制y坐标
         } else {
-            // 从左往右翻页，origin在x=aspect边界
+            // 从左向右翻页，origin在x=aspect边界
             float t = (aspect - mouse.x) / mouseDir.x;
             origin = mouse + t * mouseDir;
             origin.x = aspect; // 确保x坐标在右边界
