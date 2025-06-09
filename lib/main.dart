@@ -44,7 +44,7 @@ class _ShaderDemoPageState extends State<ShaderDemoPage>
   // 页面管理
   int _currentPageIndex = 0;
   static const int _totalPages = 5;
-  List<ui.Image?> _pageImages = List.filled(_totalPages, null);
+  final List<ui.Image?> _pageImages = List.filled(_totalPages, null);
 
   ui.Image? _frontImage;
   ui.Image? _backImage;
