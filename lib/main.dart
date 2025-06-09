@@ -60,13 +60,20 @@ class _ShaderDemoPageState extends State<ShaderDemoPage>
   // 惯性动画相关
   Offset _velocity = Offset.zero;
 
+  // 页面大小减去上下左右的40像素边距
+  static const double _pageMargin = 40.0;
+  Size get _pageScreenSize => Size(
+    widget.screenSize.width - _pageMargin * 2,
+    widget.screenSize.height - _pageMargin * 2,
+  );
+
   // 最小动画速度（当检测速度过低时使用）
   static const double _minAnimationSpeed = 800.0;
 
   @override
   void initState() {
     super.initState();
-    _currentSize = widget.screenSize;
+    _currentSize = _pageScreenSize;
 
     // 初始化惯性动画控制器
     _flingController = AnimationController(
@@ -103,8 +110,8 @@ class _ShaderDemoPageState extends State<ShaderDemoPage>
   void didUpdateWidget(ShaderDemoPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     // 检查屏幕尺寸是否变化
-    if (oldWidget.screenSize != widget.screenSize) {
-      _currentSize = widget.screenSize;
+    if (oldWidget.screenSize != _pageScreenSize) {
+      _currentSize = _pageScreenSize;
       _loadImages();
     }
   }
@@ -143,10 +150,10 @@ class _ShaderDemoPageState extends State<ShaderDemoPage>
         ..pushStyle(ui.TextStyle(color: Colors.black))
         ..addText('${pageContents[i]['title']}\n${pageContents[i]['content']}');
       final paragraph = builder.build()
-        ..layout(ui.ParagraphConstraints(width: widget.screenSize.width));
+        ..layout(ui.ParagraphConstraints(width: _pageScreenSize.width));
 
       canvas.drawRect(
-        Rect.fromLTWH(0, 0, widget.screenSize.width, widget.screenSize.height),
+        Rect.fromLTWH(0, 0, _pageScreenSize.width, _pageScreenSize.height),
         Paint()
           ..isAntiAlias = true
           ..color = pageContents[i]['color'] as Color,
@@ -154,8 +161,8 @@ class _ShaderDemoPageState extends State<ShaderDemoPage>
       canvas.drawParagraph(paragraph, Offset(0, 100));
 
       final img = await recorder.endRecording().toImage(
-        widget.screenSize.width.toInt(),
-        widget.screenSize.height.toInt(),
+        _pageScreenSize.width.toInt(),
+        _pageScreenSize.height.toInt(),
       );
       _pageImages[i] = img;
     }
@@ -171,105 +178,107 @@ class _ShaderDemoPageState extends State<ShaderDemoPage>
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        // 着色器画布
-        if (_frontImage != null && _backImage != null)
-          GestureDetector(
-            onPanStart: (details) {
-              // 检查是否可以翻页
-              if (!_canFlipPage(details.localPosition)) {
-                return; // 如果不能翻页，直接返回
-              }
-              // 如果正在动画中，先停止动画
-              if (_isAnimating) {
-                _flingController.stop();
-                _isAnimating = false;
-              }
+    return Center(
+      child: Stack(
+        children: [
+          // 着色器画布
+          if (_frontImage != null && _backImage != null)
+            GestureDetector(
+              onPanStart: (details) {
+                // 检查是否可以翻页
+                if (!_canFlipPage(details.localPosition)) {
+                  return; // 如果不能翻页，直接返回
+                }
+                // 如果正在动画中，先停止动画
+                if (_isAnimating) {
+                  _flingController.stop();
+                  _isAnimating = false;
+                }
 
-              setState(() {
-                // 更新背景图片以显示正确的下一页
-                _updateBackImage(details.localPosition);
-                _isDragging = true;
-                _dragStart = details.localPosition;
-                _dragPosition = details.localPosition;
-                _velocity = Offset.zero;
-              });
-            },
-            onPanUpdate: (details) {
-              if (!_isAnimating) {
-                // 只在非动画状态下更新
                 setState(() {
+                  // 更新背景图片以显示正确的下一页
+                  _updateBackImage(details.localPosition);
+                  _isDragging = true;
+                  _dragStart = details.localPosition;
                   _dragPosition = details.localPosition;
+                  _velocity = Offset.zero;
                 });
-              }
-            },
-            onPanEnd: (details) {
-              if (!_isDragging) return; // 如果没有拖动
-              // 计算速度
-              _velocity = details.velocity.pixelsPerSecond;
-              final speed = _velocity.distance;
+              },
+              onPanUpdate: (details) {
+                if (!_isAnimating) {
+                  // 只在非动画状态下更新
+                  setState(() {
+                    _dragPosition = details.localPosition;
+                  });
+                }
+              },
+              onPanEnd: (details) {
+                if (!_isDragging) return; // 如果没有拖动
+                // 计算速度
+                _velocity = details.velocity.pixelsPerSecond;
+                final speed = _velocity.distance;
 
-              // 计算动画目标位置
-              final targetPosition = _calculateAnimationTarget();
+                // 计算动画目标位置
+                final targetPosition = _calculateAnimationTarget();
 
-              // 如果速度过低，使用最小恒定速度
-              final effectiveSpeed = speed < _minAnimationSpeed
-                  ? _minAnimationSpeed
-                  : speed;
+                // 如果速度过低，使用最小恒定速度
+                final effectiveSpeed = speed < _minAnimationSpeed
+                    ? _minAnimationSpeed
+                    : speed;
 
-              setState(() {
-                _isDragging = false;
-                _isAnimating = true;
-                _animationStartPosition = _dragPosition;
-                _animationEndPosition = targetPosition;
-              });
+                setState(() {
+                  _isDragging = false;
+                  _isAnimating = true;
+                  _animationStartPosition = _dragPosition;
+                  _animationEndPosition = targetPosition;
+                });
 
-              // 统一使用惯性动画
-              _startFlingAnimation(targetPosition, effectiveSpeed);
-            },
-            child: ShaderBuilder(
-              assetKey: 'shaders/page_curl.frag',
-              (context, shader, child) => CustomPaint(
-                size: widget.screenSize,
-                painter: ShaderPainter(
-                  shader: shader,
-                  frontImage: _frontImage!,
-                  backImage: _backImage!,
-                  mousePos: _dragPosition,
-                  mouseStart: _dragStart,
-                  isDragging: _isDragging || _isAnimating,
+                // 统一使用惯性动画
+                _startFlingAnimation(targetPosition, effectiveSpeed);
+              },
+              child: ShaderBuilder(
+                assetKey: 'shaders/page_curl.frag',
+                (context, shader, child) => CustomPaint(
+                  size: _pageScreenSize,
+                  painter: ShaderPainter(
+                    shader: shader,
+                    frontImage: _frontImage!,
+                    backImage: _backImage!,
+                    mousePos: _dragPosition,
+                    mouseStart: _dragStart,
+                    isDragging: _isDragging || _isAnimating,
+                  ),
                 ),
+                child: const Center(child: CircularProgressIndicator()),
               ),
-              child: const Center(child: CircularProgressIndicator()),
-            ),
-          )
-        else
-          Center(child: const CircularProgressIndicator()),
+            )
+          else
+            Center(child: const CircularProgressIndicator()),
 
-        // 页面圆点指示器
-        Positioned(
-          bottom: 20,
-          left: 0,
-          right: 0,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(_totalPages, (index) {
-              return Container(
-                margin: const EdgeInsets.symmetric(horizontal: 4),
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: index == _currentPageIndex
-                      ? Colors.blue
-                      : Colors.grey.shade400,
-                ),
-              );
-            }),
+          // 页面圆点指示器
+          Positioned(
+            bottom: 20,
+            left: 0,
+            right: 0,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(_totalPages, (index) {
+                return Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: index == _currentPageIndex
+                        ? Colors.blue
+                        : Colors.grey.shade400,
+                  ),
+                );
+              }),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 

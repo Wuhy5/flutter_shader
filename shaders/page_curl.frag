@@ -3,15 +3,16 @@
 #include <flutter/runtime_effect.glsl>
 
 // 定义渲染分辨率uniform变量
-uniform vec2 iResolution; // 渲染分辨率
+uniform vec2 iResolution;
 // 定义鼠标位置和状态uniform变量
-uniform vec4 iMouse; // 鼠标位置和状态 xy: 鼠标位置, zw: 鼠标起始点击位置
+// 鼠标位置和状态 xy: 鼠标位置, zw: 鼠标起始点击位置
+uniform vec4 iMouse;
 // 定义正面纹理采样器
-uniform sampler2D iChannel0; // 正面纹理
+uniform sampler2D iChannel0;
 // 定义背面纹理采样器
-uniform sampler2D iChannel1; // 背面纹理
-// 定义翻页方向控制变量
-uniform float iCurlDirection; // 翻页方向：1.0 表示从左向右翻页，-1.0 表示从右向左翻页
+uniform sampler2D iChannel1;
+// 定义翻页方向控制变量 1.0 表示从左向右翻页，-1.0 表示从右向左翻页
+uniform float iCurlDirection;
 
 // 定义数学常数圆周率（注意：这会覆盖第16行的pi定义）
 const float pi = 3.14159265359; // 圆周率
@@ -30,10 +31,17 @@ const float lineThickness = 0.003; // 线条厚度
 const vec2 shadowOffset = vec2(0.005, -0.003); // 阴影偏移
 const float shadowIntensity = 0.3;             // 阴影强度
 
-// 抗锯齿参数
+// 抗锯齿模式选择
+// 0: 无抗锯齿, 1: 优化MSAA, 2: 原始MSAA
+const int aaMode = 1;
+
+// 抗锯齿调试模式（显示哪些区域应用了AA）
+const bool aaDebugMode = false;
+
+// 原始MAAA抗锯齿参数
 // 抗锯齿采样数（2x2 = 4个采样点）
 // 越高的值会增加抗锯齿效果，但也会增加计算开销
-const int aasamples = 1;
+const int aasamples = 3;
 // 抗锯齿采样范围
 // 每个采样点的宽度
 const float aawidth = 0.7;
@@ -241,8 +249,6 @@ vec2 pointOnCircle(vec2 center, vec2 startPoint, float currentRadius, float arcL
     return endPoint; // 返回终点
 }
 
-
-
 /**
  * 转换坐标到纹理坐标
  * 将世界坐标转换为适合纹理采样的归一化坐标
@@ -303,8 +309,6 @@ vec4 renderPageCurl(vec2 fragCoord) {
     float aspect = iResolution.x / iResolution.y; // 计算宽高比
     // 将屏幕坐标转换为归一化的纹理坐标
     vec2 uv = fragCoord * vec2(aspect, 1.0) / iResolution.xy; // 归一化纹理坐标
-
-//    vec2 cornerFrom = (currentMouse.w<resolution.y/2)?vec2(aspect, 0.0):vec2(aspect, 1.0);
 
     // 获取翻页起始角落位置
     // 计算屏幕高度的一半，用于判断鼠标在上半部分还是下半部分
@@ -411,28 +415,53 @@ vec4 renderPageCurl(vec2 fragCoord) {
 }
 
 /**
+ * 优化的多重采样抗锯齿
+ * 使用预定义的采样模式，而不是规则网格
+ * @param fragCoord 片段坐标
+ * @return 抗锯齿后的颜色
+ */
+vec4 optimizedMSAA(vec2 fragCoord) {
+    // 4x MSAA 采样点（Rotated Grid）- 使用SkSL兼容的方式
+    vec4 result = vec4(0.0);
+
+    // 直接计算每个采样点，避免数组初始化
+    result += renderPageCurl(fragCoord + vec2(-0.375, -0.125)); // 左上
+    result += renderPageCurl(fragCoord + vec2(0.125, -0.375));  // 右上
+    result += renderPageCurl(fragCoord + vec2(-0.125, 0.375));  // 左下
+    result += renderPageCurl(fragCoord + vec2(0.375, 0.125));   // 右下
+
+    return result * 0.25; // 平均
+}
+
+/**
  * 主函数，计算每个像素的颜色（带抗锯齿）
  * 着色器的入口函数，负责计算翻页效果的每个像素颜色
  */
 void main() {
     // 获取当前片段的屏幕坐标
     vec2 fragCoord = FlutterFragCoord().xy;
+    vec2 texelSize = 1.0 / iResolution.xy;
+    vec4 vs;
 
-    // 抗锯齿处理：多重采样
-    vec4 vs = vec4(0.0);
-    int totalSamples = aasamples * aasamples;
-
-    for (int j = 0; j < aasamples; j++) {
-        float oy = float(j) * aawidth / max(float(aasamples - 1), 1.0);
-        for (int i = 0; i < aasamples; i++) {
-            float ox = float(i) * aawidth / max(float(aasamples - 1), 1.0);
-            // 对每个子像素位置进行采样
-            vs += renderPageCurl(fragCoord + vec2(ox, oy));
+    // 根据模式选择抗锯齿方法
+    if (aaMode == 0) {
+        // 无抗锯齿
+        vs = renderPageCurl(fragCoord);
+    } else if (aaMode == 1) {
+        // 优化的MSAA - 性能中等
+        vs = optimizedMSAA(fragCoord);
+    } else {
+        // 原始MSAA方法
+        vs = vec4(0.0);
+        for (int j = 0; j < aasamples; j++) {
+            float oy = float(j) * aawidth / max(float(aasamples - 1), 1.0);
+            for (int i = 0; i < aasamples; i++) {
+                float ox = float(i) * aawidth / max(float(aasamples - 1), 1.0);
+                vs += renderPageCurl(fragCoord + vec2(ox, oy));
+            }
         }
+        vs = vs / vec4(aasamples * aasamples);
     }
-
-    // 平均所有采样结果
-    vs = vs / vec4(aasamples * aasamples);
 
     if (showDebug) {
         // 计算用于调试显示的坐标
@@ -444,13 +473,13 @@ void main() {
         // 计算翻页原点
         vec2 origin;
         if (iCurlDirection == -1.0) {
-            // 从右向左翻页，origin在x=0边界
+            // 从右往左翻页，origin在x=0边界
             float t = -mouse.x / mouseDir.x;
             origin = mouse + t * mouseDir;
             origin.x = 0.0; // 确保x坐标在左边界
             origin.y = clamp(origin.y, 0.0, 1.0); // 仅限制y坐标
         } else {
-            // 从左向右翻页，origin在x=aspect边界
+            // 从左往右翻页，origin在x=aspect边界
             float t = (aspect - mouse.x) / mouseDir.x;
             origin = mouse + t * mouseDir;
             origin.x = aspect; // 确保x坐标在右边界
