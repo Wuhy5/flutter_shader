@@ -1,124 +1,85 @@
-import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter_shader/shader_painter.dart';
-import 'package:flutter_shaders/flutter_shaders.dart';
+import 'package:flutter_shader/shader_page_view.dart';
 
+// 应用入口点
 void main() {
   runApp(const MyApp());
 }
 
+// 应用的根 Widget
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter 着色器翻页效果',
+      title: 'Flutter 着色器翻页效果', // 应用标题
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.deepPurple,
+        ), // 应用主题颜色
       ),
+      // 将 ShaderDemoPage 设置为主页，并传入屏幕尺寸
       home: ShaderDemoPage(screenSize: MediaQuery.of(context).size),
     );
   }
 }
 
+// 着色器演示页面，是一个 StatefulWidget，因为其状态会随时间改变
 class ShaderDemoPage extends StatefulWidget {
   const ShaderDemoPage({super.key, required this.screenSize});
 
+  // 屏幕尺寸，由 MyApp 传入
   final Size screenSize;
 
   @override
   State<ShaderDemoPage> createState() => _ShaderDemoPageState();
 }
 
-class _ShaderDemoPageState extends State<ShaderDemoPage>
-    with TickerProviderStateMixin {
-  Offset _dragPosition = Offset.zero;
-  Offset _dragStart = Offset.zero;
-
-  bool _isDragging = false;
-  bool _isAnimating = false;
-
+// ShaderDemoPage 的状态管理类
+class _ShaderDemoPageState extends State<ShaderDemoPage> {
   // 页面管理
-  int _currentPageIndex = 0;
-  static const int _totalPages = 5;
+  int _currentPageIndex = 0; // 当前显示的页面索引，会通过 ShaderPageView 的回调更新
+  static const int _totalPages = 5; // 固定的总页面数量
+  // 存储每个页面的 ui.Image 对象列表，初始化为 null
   final List<ui.Image?> _pageImages = List.filled(_totalPages, null);
+  bool _imagesLoaded = false; // 标记图片是否已加载完成
 
-  ui.Image? _frontImage;
-  ui.Image? _backImage;
-  Size _currentSize = Size.zero;
-
-  // 动画控制器（统一使用惯性动画）
-  late AnimationController _flingController;
-  late Animation<Offset> _offsetAnimation;
-
-  // 动画起始和结束位置
-  Offset _animationStartPosition = Offset.zero;
-  Offset _animationEndPosition = Offset.zero;
-
-  // 惯性动画相关
-  Offset _velocity = Offset.zero;
-
-  // 页面大小减去上下左右的40像素边距
+  // 页面内容区域的边距
   static const double _pageMargin = 40.0;
+  // 计算实际用于显示页面内容的尺寸（屏幕尺寸减去两边的边距）
   Size get _pageScreenSize => Size(
     widget.screenSize.width - _pageMargin * 2,
     widget.screenSize.height - _pageMargin * 2,
   );
 
-  // 最小动画速度（当检测速度过低时使用）
-  static const double _minAnimationSpeed = 800.0;
-
   @override
   void initState() {
     super.initState();
-    _currentSize = _pageScreenSize;
-
-    // 初始化惯性动画控制器
-    _flingController = AnimationController(
-      duration: const Duration(milliseconds: 600),
-      vsync: this,
-    );
-
-    _offsetAnimation = Tween<Offset>(begin: Offset.zero, end: Offset.zero)
-        .animate(
-          CurvedAnimation(
-            parent: _flingController,
-            curve: Curves.fastOutSlowIn,
-          ),
-        );
-    _offsetAnimation.addListener(() {
-      if (_isAnimating) {
-        _dragPosition = _offsetAnimation.value;
-        // 使用markNeedsPaint来避免重建整个widget
-        if (mounted) {
-          setState(() {});
-        }
-      }
-    });
-    _offsetAnimation.addStatusListener((status) {
-      if (status == AnimationStatus.completed) {
-        _handleAnimationComplete();
-      }
-    });
-
-    _loadImages();
+    _loadImages(); // 初始化时加载所有页面图片
   }
 
   @override
   void didUpdateWidget(ShaderDemoPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 检查屏幕尺寸是否变化
-    if (oldWidget.screenSize != _pageScreenSize) {
-      _currentSize = _pageScreenSize;
+    // 当依赖的 widget 更新时调用（例如屏幕尺寸变化）
+    if (oldWidget.screenSize != widget.screenSize) {
+      // 如果屏幕尺寸发生变化，重新加载图片
+      // 假设图片内容生成依赖于 _pageScreenSize
       _loadImages();
     }
   }
 
+  // 异步加载所有页面的图片内容
   Future<void> _loadImages() async {
-    // 创建5个不同的页面内容
+    // 在加载图片前确保 _pageScreenSize 是最新的
+    final currentDisplaySize = _pageScreenSize;
+    // 如果显示尺寸为空（例如，在 widget 构建完成前），则不进行加载
+    if (currentDisplaySize.isEmpty) return;
+
+    // 定义5个页面的内容数据
     final pageContents = [
       {'title': '第一页', 'content': 'Hello Flutter!', 'color': Colors.white},
       {
@@ -139,344 +100,120 @@ class _ShaderDemoPageState extends State<ShaderDemoPage>
       {'title': '第五页', 'content': 'Page 5\n最后一页', 'color': Colors.pink.shade50},
     ];
 
+    // 遍历每个页面，生成对应的 ui.Image
     for (int i = 0; i < _totalPages; i++) {
-      final recorder = ui.PictureRecorder();
-      final canvas = Canvas(recorder);
+      final recorder = ui.PictureRecorder(); // 用于记录绘制操作
+      final canvas = Canvas(recorder); // 获取画布
+      // 设置段落样式
       final paragraphStyle = ui.ParagraphStyle(
         textAlign: TextAlign.center,
         fontWeight: FontWeight.bold,
         fontSize: 20,
       );
+      // 构建段落内容
       final builder = ui.ParagraphBuilder(paragraphStyle)
-        ..pushStyle(ui.TextStyle(color: Colors.black))
+        ..pushStyle(ui.TextStyle(color: Colors.black)) // 设置文本颜色
         ..addText('${pageContents[i]['title']}\n${pageContents[i]['content']}');
       final paragraph = builder.build()
-        ..layout(ui.ParagraphConstraints(width: _pageScreenSize.width));
+        ..layout(
+          ui.ParagraphConstraints(width: currentDisplaySize.width),
+        ); // 对段落进行布局
 
+      // 绘制页面背景色
       canvas.drawRect(
-        Rect.fromLTWH(0, 0, _pageScreenSize.width, _pageScreenSize.height),
+        Rect.fromLTWH(
+          0,
+          0,
+          currentDisplaySize.width,
+          currentDisplaySize.height,
+        ),
         Paint()
-          ..isAntiAlias = true
-          ..color = pageContents[i]['color'] as Color,
+          ..isAntiAlias =
+              true // 抗锯齿
+          ..color = pageContents[i]['color'] as Color, // 页面背景色
       );
-      canvas.drawParagraph(paragraph, Offset(0, 100));
+      // 绘制段落文本
+      canvas.drawParagraph(paragraph, Offset(0, 100)); // 文本绘制的起始偏移
 
+      // 结束记录并将绘制内容转换为 ui.Image
       final img = await recorder.endRecording().toImage(
-        _pageScreenSize.width.toInt(),
-        _pageScreenSize.height.toInt(),
+        currentDisplaySize.width.toInt(), // 图片宽度
+        currentDisplaySize.height.toInt(), // 图片高度
       );
-      _pageImages[i] = img;
+      _pageImages[i] = img; // 存储生成的图片
     }
 
-    setState(() {
-      _frontImage = _pageImages[_currentPageIndex];
-      _backImage =
-          _pageImages[_currentPageIndex + 1 < _totalPages
-              ? _currentPageIndex + 1
-              : _currentPageIndex];
-    });
+    // 如果 widget 仍然挂载，则更新状态以触发 UI 重建
+    if (mounted) {
+      setState(() {
+        _imagesLoaded = true; // 标记图片已加载完成
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Stack(
-        children: [
-          // 着色器画布
-          if (_frontImage != null && _backImage != null)
-            GestureDetector(
-              onPanStart: (details) {
-                // 检查是否可以翻页
-                if (!_canFlipPage(details.localPosition)) {
-                  return; // 如果不能翻页，直接返回
-                }
-                // 如果正在动画中，先停止动画
-                if (_isAnimating) {
-                  _flingController.stop();
-                  _isAnimating = false;
-                }
+    final currentDisplaySize = _pageScreenSize; // 获取当前计算的页面显示尺寸
+    return Scaffold(
+      backgroundColor: Colors.grey[200], // 设置页面背景色
+      body: Center(
+        // 将内容居中显示
+        child: Stack(
+          // 使用 Stack 布局，允许子 widget 叠加
+          alignment: Alignment.center, // Stack 内子 widget 对齐方式
+          children: [
+            // ShaderPageView 组件，用于显示和处理翻页效果
+            if (_imagesLoaded &&
+                currentDisplaySize.width > 0 &&
+                currentDisplaySize.height > 0)
+              ShaderPageView(
+                // 使用 ValueKey 确保在 currentDisplaySize 变化时重建 ShaderPageView
+                key: ValueKey(currentDisplaySize),
+                images: _pageImages, // 传入已加载的图片列表
+                pageSize: currentDisplaySize, // 传入计算好的页面尺寸
+                initialPage: _currentPageIndex, // 初始显示的页面索引
+                // 页面变化时的回调，用于更新 _currentPageIndex
+                onPageChanged: (index) {
+                  if (mounted) {
+                    setState(() {
+                      _currentPageIndex = index;
+                    });
+                  }
+                },
+              )
+            else if (currentDisplaySize.isEmpty)
+              // 如果屏幕尺寸为零，显示提示信息
+              Center(child: Text("Screen size is zero, cannot display pages."))
+            else
+              // 如果图片未加载完成，显示加载指示器
+              Center(child: const CircularProgressIndicator()),
 
-                setState(() {
-                  // 更新背景图片以显示正确的下一页
-                  _updateBackImage(details.localPosition);
-                  _isDragging = true;
-                  _dragStart = details.localPosition;
-                  _dragPosition = details.localPosition;
-                  _velocity = Offset.zero;
-                });
-              },
-              onPanUpdate: (details) {
-                if (!_isAnimating) {
-                  // 只在非动画状态下更新
-                  setState(() {
-                    _dragPosition = details.localPosition;
-                  });
-                }
-              },
-              onPanEnd: (details) {
-                if (!_isDragging) return; // 如果没有拖动
-                // 计算速度
-                _velocity = details.velocity.pixelsPerSecond;
-                final speed = _velocity.distance;
-
-                // 计算动画目标位置
-                final targetPosition = _calculateAnimationTarget();
-
-                // 如果速度过低，使用最小恒定速度
-                final effectiveSpeed = speed < _minAnimationSpeed
-                    ? _minAnimationSpeed
-                    : speed;
-
-                setState(() {
-                  _isDragging = false;
-                  _isAnimating = true;
-                  _animationStartPosition = _dragPosition;
-                  _animationEndPosition = targetPosition;
-                });
-
-                // 统一使用惯性动画
-                _startFlingAnimation(targetPosition, effectiveSpeed);
-              },
-              child: ShaderBuilder(
-                assetKey: 'shaders/page_curl.frag',
-                (context, shader, child) => CustomPaint(
-                  size: _pageScreenSize,
-                  painter: ShaderPainter(
-                    shader: shader,
-                    frontImage: _frontImage!,
-                    backImage: _backImage!,
-                    mousePos: _dragPosition,
-                    mouseStart: _dragStart,
-                    isDragging: _isDragging || _isAnimating,
-                  ),
-                ),
-                child: const Center(child: CircularProgressIndicator()),
+            // 页面圆点指示器
+            Positioned(
+              bottom: 20, // 距离底部 20 像素
+              child: Row(
+                // 使用 Row 横向排列圆点
+                mainAxisAlignment: MainAxisAlignment.center, // 圆点居中对齐
+                children: List.generate(_totalPages, (index) {
+                  // 生成 _totalPages 个圆点
+                  return Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 4), // 圆点间距
+                    width: 8, // 圆点宽度
+                    height: 8, // 圆点高度
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle, // 圆形
+                      // 当前页面索引对应的圆点显示为蓝色，其他为灰色
+                      color: index == _currentPageIndex
+                          ? Colors.blue
+                          : Colors.grey.shade400,
+                    ),
+                  );
+                }),
               ),
-            )
-          else
-            Center(child: const CircularProgressIndicator()),
-
-          // 页面圆点指示器
-          Positioned(
-            bottom: 20,
-            left: 0,
-            right: 0,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(_totalPages, (index) {
-                return Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 4),
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: index == _currentPageIndex
-                        ? Colors.blue
-                        : Colors.grey.shade400,
-                  ),
-                );
-              }),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    _flingController.dispose();
-    super.dispose();
-  }
-
-  // 交换前后图片并更新页面索引
-  void _swapImages() {
-    final isCurlFromRight = _dragStart.dx > _currentSize.width / 2;
-
-    if (isCurlFromRight) {
-      // 从右往左翻页，前往下一页
-      if (_currentPageIndex < _totalPages - 1) {
-        _currentPageIndex++;
-        _frontImage = _pageImages[_currentPageIndex];
-        _backImage = _currentPageIndex < _totalPages - 1
-            ? _pageImages[_currentPageIndex + 1]
-            : _pageImages[_currentPageIndex];
-      }
-    } else {
-      // 从左往右翻页，前往上一页
-      if (_currentPageIndex > 0) {
-        _currentPageIndex--;
-        _frontImage = _pageImages[_currentPageIndex];
-        _backImage = _currentPageIndex > 0
-            ? _pageImages[_currentPageIndex - 1]
-            : _pageImages[_currentPageIndex];
-      }
-    }
-  }
-
-  // 检查是否可以翻页
-  bool _canFlipPage(Offset position) {
-    final isCurlFromRight = position.dx > _currentSize.width / 2;
-
-    if (isCurlFromRight) {
-      // 从右往左翻页，检查是否有下一页
-      return _currentPageIndex < _totalPages - 1;
-    } else {
-      // 从左往右翻页，检查是否有上一页
-      return _currentPageIndex > 0;
-    }
-  }
-
-  // 更新背景图片以显示正确的下一页
-  void _updateBackImage(Offset startPosition) {
-    final isCurlFromRight = startPosition.dx > _currentSize.width / 2;
-
-    if (isCurlFromRight && _currentPageIndex < _totalPages - 1) {
-      // 从右往左翻页，显示下一页
-      _backImage = _pageImages[_currentPageIndex + 1];
-    } else if (!isCurlFromRight && _currentPageIndex > 0) {
-      // 从左往右翻页，显示上一页
-      _backImage = _pageImages[_currentPageIndex - 1];
-    }
-    print(
-      '更新背景图片，当前页: $_currentPageIndex, 翻页方向: ${isCurlFromRight ? '右向左' : '左向右'}',
-    );
-  }
-
-  // 判断是否应该完成翻页
-  bool _shouldCompletePage() {
-    if (_dragStart == Offset.zero) return false;
-
-    // 检查是否可以翻页
-    if (!_canFlipPage(_dragStart)) return false;
-
-    final dragDistance = (_dragPosition - _dragStart).distance;
-    final screenDiagonal = math.sqrt(
-      _currentSize.width * _currentSize.width +
-          _currentSize.height * _currentSize.height,
-    );
-
-    // 基础距离判断 - 降低阈值使翻页更容易
-    final distanceThreshold = screenDiagonal * 0.4;
-    final hasEnoughDistance = dragDistance > distanceThreshold;
-
-    // 速度判断 - 如果速度足够快，进一步降低距离要求
-    final speed = _velocity.distance;
-    final hasEnoughSpeed = speed > 600;
-    final speedBasedDistance = hasEnoughSpeed
-        ? distanceThreshold * 0.5
-        : distanceThreshold;
-
-    // 方向判断 - 确保拖拽方向与翻页方向一致
-    final dragDirection = _dragPosition - _dragStart;
-    final isCurlFromRight = _dragStart.dx > _currentSize.width / 2;
-    final isCorrectDirection = isCurlFromRight
-        ? dragDirection.dx < 0
-        : dragDirection.dx > 0;
-
-    // 增加渐进式判断：如果拖拽距离很大，即使方向稍有偏差也允许翻页
-    final isLargeDrag = dragDistance > screenDiagonal * 0.4;
-    final finalDirectionCheck = isCorrectDirection || isLargeDrag;
-
-    return finalDirectionCheck &&
-        (hasEnoughDistance ||
-            (hasEnoughSpeed && dragDistance > speedBasedDistance));
-  }
-
-  // 计算动画目标位置
-  Offset _calculateAnimationTarget() {
-    if (_shouldCompletePage()) {
-      // 完成翻页，计算最终位置
-      final isCurlFromRight = _dragStart.dx > _currentSize.width / 2;
-      final halfHeight = _currentSize.height / 2;
-
-      // 判断起点是否在Y轴中点附近
-      final isNearVerticalCenter =
-          (_dragStart.dy - halfHeight).abs() < halfHeight * 0.3; // 30%容差
-
-      if (isNearVerticalCenter) {
-        // 起点在Y轴中点附近，终点设为对应边界的中点
-        if (isCurlFromRight) {
-          // 从右往左翻页，移动到左边界中点
-          return Offset(0, halfHeight);
-        } else {
-          // 从左往右翻页，移动到右边界中点
-          return Offset(_currentSize.width, halfHeight);
-        }
-      } else {
-        // 起点不在Y轴中点，终点设为对应的对角点
-        if (isCurlFromRight) {
-          // 从右往左翻页，移动到左边界对角点
-          final targetY = _dragStart.dy < halfHeight
-              ? 0.0
-              : _currentSize.height;
-          return Offset(0, targetY);
-        } else {
-          // 从左往右翻页，移动到右边界对角点
-          final targetY = _dragStart.dy < halfHeight
-              ? 0.0
-              : _currentSize.height;
-          return Offset(_currentSize.width, targetY);
-        }
-      }
-    } else {
-      // 回到起始位置
-      return _dragStart;
-    }
-  }
-
-  // 启动惯性动画（统一的动画方法）
-  void _startFlingAnimation(Offset targetPosition, double speed) {
-    // 根据速度动态调整动画时长，更快的速度用更长的时间来减速
-    final baseDuration = math.max(
-      250,
-      math.min(600, (1200 * 400 / speed).round()),
-    );
-    final duration = Duration(milliseconds: baseDuration);
-
-    _flingController.duration = duration;
-
-    final flingAnimation =
-        Tween<Offset>(
-          begin: _animationStartPosition,
-          end: _animationEndPosition,
-        ).animate(
-          CurvedAnimation(
-            parent: _flingController,
-            curve: Curves.fastOutSlowIn, // 更自然的缓动曲线
-          ),
-        );
-
-    // 更新动画监听器
-    _offsetAnimation = flingAnimation;
-    flingAnimation.addListener(() {
-      if (_isAnimating && mounted) {
-        _dragPosition = flingAnimation.value;
-        setState(() {});
-      }
-    });
-
-    flingAnimation.addStatusListener((status) {
-      if (status == AnimationStatus.completed) {
-        _handleAnimationComplete();
-      }
-    });
-
-    _flingController.forward(from: 0.0);
-  }
-
-  // 处理动画完成
-  void _handleAnimationComplete() {
-    setState(() {
-      _isAnimating = false;
-      // 动画完成后重置状态
-      if (_shouldCompletePage()) {
-        // 翻页完成，交换前后图片
-        _swapImages();
-      }
-      _dragPosition = Offset.zero;
-      _dragStart = Offset.zero;
-      _velocity = Offset.zero;
-    });
   }
 }

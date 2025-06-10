@@ -50,9 +50,6 @@ class ShaderPainter extends CustomPainter {
 
     // 绘制全屏矩形
     canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
-    print(
-      '绘制着色器，鼠标位置: $mousePos, 起始位置: $mouseStart, 是否拖动: $isDragging , 翻页方向: ${iCurlDirection > 0 ? '左向右' : '右向左'}',
-    );
   }
 
   @override
