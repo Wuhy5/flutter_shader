@@ -47,6 +47,27 @@ class _ShaderDemoPageState extends State<ShaderDemoPage> {
   final List<ui.Image?> _pageImages = List.filled(_totalPages, null);
   bool _imagesLoaded = false; // 标记图片是否已加载完成
 
+  // 使用 static final 代替 static const 以允许运行时初始化的颜色值
+  static final List<Map<String, Object>> _pageContentsData = [
+    {'title': '第一页', 'content': 'Hello Flutter!', 'color': Colors.white},
+    {
+      'title': '第二页',
+      'content': 'Page 2\n着色器翻页效果',
+      'color': Colors.lightBlue.shade50,
+    },
+    {
+      'title': '第三页',
+      'content': 'Page 3\n中间页面',
+      'color': Colors.lightGreen.shade50,
+    },
+    {
+      'title': '第四页',
+      'content': 'Page 4\n倒数第二页',
+      'color': Colors.orange.shade50,
+    },
+    {'title': '第五页', 'content': 'Page 5\n最后一页', 'color': Colors.pink.shade50},
+  ];
+
   // 页面内容区域的边距
   static const double _pageMargin = 40.0;
   // 计算实际用于显示页面内容的尺寸（屏幕尺寸减去两边的边距）
@@ -79,47 +100,32 @@ class _ShaderDemoPageState extends State<ShaderDemoPage> {
     // 如果显示尺寸为空（例如，在 widget 构建完成前），则不进行加载
     if (currentDisplaySize.isEmpty) return;
 
-    // 定义5个页面的内容数据
-    final pageContents = [
-      {'title': '第一页', 'content': 'Hello Flutter!', 'color': Colors.white},
-      {
-        'title': '第二页',
-        'content': 'Page 2\n着色器翻页效果',
-        'color': Colors.lightBlue.shade50,
-      },
-      {
-        'title': '第三页',
-        'content': 'Page 3\n中间页面',
-        'color': Colors.lightGreen.shade50,
-      },
-      {
-        'title': '第四页',
-        'content': 'Page 4\n倒数第二页',
-        'color': Colors.orange.shade50,
-      },
-      {'title': '第五页', 'content': 'Page 5\n最后一页', 'color': Colors.pink.shade50},
-    ];
+    // 定义段落样式和文本样式（这些在循环外定义，因为它们是固定的）
+    final paragraphStyle = ui.ParagraphStyle(
+      textAlign: TextAlign.center,
+      fontWeight: FontWeight.bold,
+      fontSize: 20,
+    );
+    final textStyle = ui.TextStyle(color: Colors.black);
+    final pagePaint = Paint()..isAntiAlias = true;
 
     // 遍历每个页面，生成对应的 ui.Image
     for (int i = 0; i < _totalPages; i++) {
+      final pageData = _pageContentsData[i];
       final recorder = ui.PictureRecorder(); // 用于记录绘制操作
       final canvas = Canvas(recorder); // 获取画布
-      // 设置段落样式
-      final paragraphStyle = ui.ParagraphStyle(
-        textAlign: TextAlign.center,
-        fontWeight: FontWeight.bold,
-        fontSize: 20,
-      );
+
       // 构建段落内容
       final builder = ui.ParagraphBuilder(paragraphStyle)
-        ..pushStyle(ui.TextStyle(color: Colors.black)) // 设置文本颜色
-        ..addText('${pageContents[i]['title']}\n${pageContents[i]['content']}');
+        ..pushStyle(textStyle) // 设置文本颜色
+        ..addText('${pageData['title']}\n${pageData['content']}');
       final paragraph = builder.build()
         ..layout(
           ui.ParagraphConstraints(width: currentDisplaySize.width),
         ); // 对段落进行布局
 
       // 绘制页面背景色
+      pagePaint.color = pageData['color'] as Color;
       canvas.drawRect(
         Rect.fromLTWH(
           0,
@@ -127,10 +133,7 @@ class _ShaderDemoPageState extends State<ShaderDemoPage> {
           currentDisplaySize.width,
           currentDisplaySize.height,
         ),
-        Paint()
-          ..isAntiAlias =
-              true // 抗锯齿
-          ..color = pageContents[i]['color'] as Color, // 页面背景色
+        pagePaint, // 页面背景色
       );
       // 绘制段落文本
       canvas.drawParagraph(paragraph, Offset(0, 100)); // 文本绘制的起始偏移
@@ -183,10 +186,10 @@ class _ShaderDemoPageState extends State<ShaderDemoPage> {
               )
             else if (currentDisplaySize.isEmpty)
               // 如果屏幕尺寸为零，显示提示信息
-              Center(child: Text("Screen size is zero, cannot display pages."))
+              const Center(child: Text("Screen size is zero, cannot display pages.")) // Make const
             else
               // 如果图片未加载完成，显示加载指示器
-              Center(child: const CircularProgressIndicator()),
+              const Center(child: CircularProgressIndicator()), // Already const
 
             // 页面圆点指示器
             Positioned(

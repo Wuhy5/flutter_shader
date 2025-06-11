@@ -10,6 +10,7 @@ class ShaderPainter extends CustomPainter {
   final Offset mouseStart;
   final bool isDragging;
   Size lastSize = Size.zero;
+  final Paint _paint;
 
   ShaderPainter({
     required this.shader,
@@ -18,7 +19,7 @@ class ShaderPainter extends CustomPainter {
     required this.mousePos,
     required this.mouseStart,
     required this.isDragging,
-  });
+  }) : _paint = Paint();
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -49,7 +50,8 @@ class ShaderPainter extends CustomPainter {
     }
 
     // 绘制全屏矩形
-    canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
+    _paint.shader = shader;
+    canvas.drawRect(Offset.zero & size, _paint);
   }
 
   @override

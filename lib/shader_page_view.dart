@@ -54,9 +54,21 @@ class _ShaderPageViewState extends State<ShaderPageView>
   // 最小动画速度，当检测到的拖动速度过低时，使用此速度以确保动画平滑
   static const double _minAnimationSpeed = 800.0;
 
-  // 防抖变量，避免快速连续操作
-  DateTime _lastGestureTime = DateTime.now();
-  static const int _gestureDebounceMs = 50;
+  // _shouldCompletePage constants
+  static const double _kDistanceThresholdFactor = 0.25; // 距离阈值因子
+  static const double _kSpeedThreshold = 500.0; // 速度阈值
+  static const double _kSpeedBasedDistanceFactor = 0.4; // 基于速度的距离调整因子
+  static const double _kDragDirectionTolerance = 20.0; // 拖动方向容差
+  static const double _kLargeDragFactor = 0.3; // 大幅度拖动判断因子
+
+  // _calculateAnimationTarget constants
+  static const double _kVerticalCenterToleranceFactor = 0.3; // 垂直中心判断容差因子
+
+  // _startFlingAnimation constants
+  static const int _kMinAnimationDurationMs = 200; // 最小动画时长 (ms)
+  static const int _kBaseMaxAnimationDurationMs = 400; // 基础最大动画时长 (ms)
+  static const double _kDurationDistanceFactor = 500.0; // 动画时长计算中的距离因子
+  static const double _kDurationSpeedDivisor = 800.0; // 动画时长计算中的速度除数
 
   @override
   void initState() {
@@ -125,7 +137,6 @@ class _ShaderPageViewState extends State<ShaderPageView>
     _backImage = _currentPageIndex + 1 < _totalPages
         ? widget.images[_currentPageIndex + 1]
         : widget.images[_currentPageIndex];
-    // 移除这里的setState，避免多余的重绘
   }
 
   @override
@@ -135,21 +146,13 @@ class _ShaderPageViewState extends State<ShaderPageView>
       return SizedBox(
         width: _currentSize.width,
         height: _currentSize.height,
-        child: const Center(child: Text("No images to display")),
+        child: const Center(child: Text("No images to display")), // Make const
       );
     }
 
     // 使用 GestureDetector 监听拖动手势
     return GestureDetector(
       onPanStart: (details) {
-        // 防抖检查
-        final now = DateTime.now();
-        if (now.difference(_lastGestureTime).inMilliseconds <
-            _gestureDebounceMs) {
-          return;
-        }
-        _lastGestureTime = now;
-
         // 检查是否可以翻页（例如，不是第一页尝试向前翻，或不是最后一页尝试向后翻）
         if (!_canFlipPage(details.localPosition)) {
           return; // 如果不能翻页，则不处理手势
@@ -159,12 +162,11 @@ class _ShaderPageViewState extends State<ShaderPageView>
           return;
         }
         setState(() {
-          // 根据拖动起始位置更新背面图片（准备翻向上一页或下一页）
-          _updateBackImageOnDragStart(details.localPosition);
           _isDragging = true; // 标记开始拖动
           _dragStart = details.localPosition; // 记录拖动起始点
           _dragPosition = details.localPosition; // 初始化当前拖动点
           _velocity = Offset.zero; // 重置速度
+          _updateBackImageOnDragStart(_dragStart); // 更新背面图片
         });
       },
       onPanUpdate: (details) {
@@ -197,21 +199,32 @@ class _ShaderPageViewState extends State<ShaderPageView>
       // 使用 ShaderBuilder 加载和应用片段着色器
       child: ShaderBuilder(
         assetKey: 'shaders/page_curl.frag', // 着色器文件路径
-        (context, shader, child) => CustomPaint(
-          // 使用 CustomPaint 进行自定义绘制
-          size: _currentSize, // 绘制区域大小
-          painter: ShaderPainter(
-            // 自定义的绘制器
-            shader: shader, // 传入加载好的着色器
-            frontImage: _frontImage!, // 正面图片
-            backImage: _backImage!, // 背面图片
-            mousePos: _dragPosition, // 当前鼠标/触摸位置
-            mouseStart: _dragStart, // 鼠标/触摸起始位置
-            isDragging: _isDragging || _isAnimating, // 是否正在拖动或动画中
-          ),
-        ),
+        (context, shader, child) {
+          return AnimatedBuilder(
+            animation: _offsetAnimation,
+            builder: (BuildContext context, Widget? _) {
+              // Wrap CustomPaint with RepaintBoundary
+              return RepaintBoundary(
+                child: CustomPaint(
+                  // 使用 CustomPaint 进行自定义绘制
+                  size: _currentSize, // 绘制区域大小
+                  painter: ShaderPainter(
+                    // 自定义的绘制器
+                    shader: shader, // 传入加载好的着色器
+                    frontImage: _frontImage!, // 正面图片
+                    backImage: _backImage!, // 背面图片
+                    mousePos:
+                        _dragPosition, // 当前鼠标/触摸位置 (由 _animationListener 更新)
+                    mouseStart: _dragStart, // 鼠标/触摸起始位置
+                    isDragging: _isDragging || _isAnimating, // 是否正在拖动或动画中
+                  ),
+                ),
+              );
+            },
+          );
+        },
         // ShaderBuilder 的 child 参数，通常用于显示加载指示器等
-        child: const Center(child: CircularProgressIndicator()),
+        child: const Center(child: CircularProgressIndicator()), // Make const
       ),
     );
   }
@@ -272,26 +285,42 @@ class _ShaderPageViewState extends State<ShaderPageView>
   void _updateBackImageOnDragStart(Offset startPosition) {
     final isCurlFromRight = startPosition.dx > _currentSize.width / 2;
 
-    // 保存当前的背面图片，避免频繁更改
-    ui.Image? newBackImage;
-
     if (isCurlFromRight && _currentPageIndex < _totalPages - 1) {
       // 从右向左翻，背面是下一页
-      newBackImage = widget.images[_currentPageIndex + 1];
+      _backImage = widget.images[_currentPageIndex + 1];
     } else if (!isCurlFromRight && _currentPageIndex > 0) {
       // 从左向右翻，背面是上一页
-      newBackImage = widget.images[_currentPageIndex - 1];
-    } else {
-      // 如果在边界，保持当前背面图片或使用默认图片
-      newBackImage = _currentPageIndex + 1 < _totalPages
-          ? widget.images[_currentPageIndex + 1]
-          : widget.images[_currentPageIndex];
+      _backImage = widget.images[_currentPageIndex - 1];
     }
+  }
 
-    // 只有当背面图片真正变化时才更新
-    if (_backImage != newBackImage) {
-      _backImage = newBackImage;
-    }
+  // Helper methods for _shouldCompletePage
+  bool _hasEnoughDragDistance(double dragDistance, double screenDiagonal) {
+    final distanceThreshold = screenDiagonal * _kDistanceThresholdFactor;
+    return dragDistance > distanceThreshold;
+  }
+
+  bool _hasEnoughDragSpeed(double speed) {
+    return speed > _kSpeedThreshold;
+  }
+
+  bool _isCorrectDragDirection(Offset dragDirection, bool isCurlFromRight) {
+    return isCurlFromRight
+        ? dragDirection.dx < _kDragDirectionTolerance
+        : dragDirection.dx > -_kDragDirectionTolerance;
+  }
+
+  double _getSpeedAdjustedDistanceThreshold(
+    double baseDistanceThreshold,
+    bool hasEnoughSpeed,
+  ) {
+    return hasEnoughSpeed
+        ? baseDistanceThreshold * _kSpeedBasedDistanceFactor
+        : baseDistanceThreshold;
+  }
+
+  bool _isLargeDrag(double dragDistance, double screenDiagonal) {
+    return dragDistance > screenDiagonal * _kLargeDragFactor;
   }
 
   // 判断拖动是否足以触发完整的翻页动作
@@ -300,42 +329,38 @@ class _ShaderPageViewState extends State<ShaderPageView>
     if (!_canFlipPage(_dragStart)) return false; // 如果从起始点就不能翻页，则不翻页
 
     final dragDistance = (_dragPosition - _dragStart).distance; // 计算拖动距离
-    // 计算页面对角线长度，作为判断阈值的参考
     final screenDiagonal = math.sqrt(
       _currentSize.width * _currentSize.width +
           _currentSize.height * _currentSize.height,
     );
-
-    // 优化阈值计算，使翻页更容易触发
-    final distanceThreshold = screenDiagonal * 0.25; // 降低距离阈值
-    final hasEnoughDistance = dragDistance > distanceThreshold;
-
     final speed = _velocity.distance; // 获取拖动速度
-    final hasEnoughSpeed = speed > 500; // 降低速度阈值
-
-    // 基于速度调整的距离阈值
-    final speedBasedDistance = hasEnoughSpeed
-        ? distanceThreshold *
-              0.4 // 速度快时进一步降低距离要求
-        : distanceThreshold;
-
     final dragDirection = _dragPosition - _dragStart; // 拖动方向向量
     final isCurlFromRight = _dragStart.dx > _currentSize.width / 2; // 是否从右侧开始翻页
 
-    // 优化方向判断，增加容错性
-    final isCorrectDirection = isCurlFromRight
-        ? dragDirection.dx <
-              20 // 从右翻，允许少量向右的误差
-        : dragDirection.dx > -20; // 从左翻，允许少量向左的误差
+    // 阈值和条件判断
+    final hasEnoughDistance = _hasEnoughDragDistance(
+      dragDistance,
+      screenDiagonal,
+    );
+    final hasEnoughSpeed = _hasEnoughDragSpeed(speed);
 
-    // 如果拖动距离较大，放宽方向要求
-    final isLargeDrag = dragDistance > screenDiagonal * 0.3;
+    final baseDistanceThreshold = screenDiagonal * _kDistanceThresholdFactor;
+    final speedAdjustedDistanceThreshold = _getSpeedAdjustedDistanceThreshold(
+      baseDistanceThreshold,
+      hasEnoughSpeed,
+    );
+
+    final isCorrectDirection = _isCorrectDragDirection(
+      dragDirection,
+      isCurlFromRight,
+    );
+    final isLargeDrag = _isLargeDrag(dragDistance, screenDiagonal);
     final finalDirectionCheck = isCorrectDirection || isLargeDrag;
 
-    // 综合判断：方向基本正确，并且（距离足够 或 速度足够）
+    // 综合判断：方向基本正确，并且（距离足够 或 (速度足够且拖动超过速度调整后的距离阈值)）
     return finalDirectionCheck &&
         (hasEnoughDistance ||
-            (hasEnoughSpeed && dragDistance > speedBasedDistance));
+            (hasEnoughSpeed && dragDistance > speedAdjustedDistanceThreshold));
   }
 
   // 计算翻页动画的目标位置
@@ -346,7 +371,8 @@ class _ShaderPageViewState extends State<ShaderPageView>
       final halfHeight = _currentSize.height / 2;
       // 判断拖动起始点是否在垂直方向的中间区域
       final isNearVerticalCenter =
-          (_dragStart.dy - halfHeight).abs() < halfHeight * 0.3; // 30% 容差
+          (_dragStart.dy - halfHeight).abs() <
+          halfHeight * _kVerticalCenterToleranceFactor; // 30% 容差
 
       if (isNearVerticalCenter) {
         // 如果起始点在垂直中线附近
@@ -375,10 +401,12 @@ class _ShaderPageViewState extends State<ShaderPageView>
 
     // 基于距离和速度的动态时长计算
     final baseDuration = math.max(
-      200, // 最小动画时长
+      _kMinAnimationDurationMs, // 最小动画时长
       math.min(
-        400,
-        (distance / screenDiagonal * 500 + 800 / speed).round(),
+        _kBaseMaxAnimationDurationMs,
+        (distance / screenDiagonal * _kDurationDistanceFactor +
+                _kDurationSpeedDivisor / speed)
+            .round(),
       ), // 动态计算
     );
     final duration = Duration(milliseconds: baseDuration);
@@ -408,10 +436,10 @@ class _ShaderPageViewState extends State<ShaderPageView>
 
   // 动画监听器回调，在动画每一帧更新时调用
   void _animationListener() {
-    if (_isAnimating && mounted) {
-      // 如果正在动画且 widget 已挂载
+    if (mounted) {
+      // 更新拖动位置，AnimatedBuilder 将处理重绘
       _dragPosition = _offsetAnimation.value; // 更新拖动位置为当前动画值
-      setState(() {}); // 触发重绘
+      // setState(() {}); // 触发重绘 - 由 AnimatedBuilder 处理
     }
   }
 

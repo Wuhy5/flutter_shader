@@ -27,10 +27,6 @@ const float pointSize = 0.01; // 点的大小
 // 定义调试线条的显示厚度
 const float lineThickness = 0.003; // 线条厚度
 
-// 阴影参数
-const vec2 shadowOffset = vec2(0.005, -0.003); // 阴影偏移
-const float shadowIntensity = 0.3;             // 阴影强度
-
 // 抗锯齿模式选择
 // 0: 无抗锯齿, 1: 优化MSAA, 2: 原始MSAA
 const int aaMode = 1;
@@ -163,47 +159,6 @@ bool isInAngleRange(vec2 uv, vec2 center, vec2 direction, float angleRange, floa
 }
 
 /**
- * 计算改进的阴影强度
- * 使用平滑过渡和偏移的高级阴影算法
- * @param targetPoint 目标点位置
- * @param aspect 宽高比
- * @return 返回阴影强度 (0.0 = 完全阴影, 1.0 = 无阴影)
- */
-float calculateAdvancedShadow(vec2 targetPoint, float aspect) {
-    // 计算阴影偏移后的位置
-    vec2 shadowPoint = targetPoint + shadowOffset;
-
-    // 检查是否在页面边界外
-
-    if (!(shadowPoint.x < 0.0 || shadowPoint.x > aspect || shadowPoint.y < 0.0 || shadowPoint.y > 1.0)) {
-        return 1.0; // 在边界内，无阴影
-    }
-
-    // 计算到边界的距离
-    float distToBoundary = 0.0;
-
-    // X方向边界距离
-    if (shadowPoint.x < 0.0) {
-        distToBoundary = max(distToBoundary, abs(shadowPoint.x));
-    } else if (shadowPoint.x > aspect) {
-        distToBoundary = max(distToBoundary, shadowPoint.x - aspect);
-    }
-
-    // Y方向边界距离
-    if (shadowPoint.y < 0.0) {
-        distToBoundary = max(distToBoundary, abs(shadowPoint.y));
-    } else if (shadowPoint.y > 1.0) {
-        distToBoundary = max(distToBoundary, shadowPoint.y - 1.0);
-    }
-
-    // 使用平滑步进函数创建渐变阴影
-    float shadowFactor = 1.0 - smoothstep(0.0, shadowWidth, distToBoundary);
-
-    // 应用阴影强度并确保最小亮度
-    return mix(1.0 - shadowIntensity, 1.0, 1.0 - shadowFactor);
-}
-
-/**
  * 旋转二维向量
  * 将二维向量按指定角度进行旋转变换
  * @param v 输入向量
@@ -271,27 +226,25 @@ bool isInBounds(vec2 p, float aspect) {
 }
 
 /**
- * 检查点是否在阴影范围内
- * 根据翻页方向判断点是否在扩展的阴影显示区域内
- * @param p 待检查的点
+ * 计算阴影强度
+ * 计算给定目标点处的阴影强度
+ * @param targetPoint 目标点
  * @param aspect 宽高比
- * @param direction 翻页方向
- * @return 是否在阴影范围内
+ * @return 阴影强度
  */
-bool isInShadowBounds(vec2 p, float aspect, float direction) {
-    // 根据翻页方向判断阴影区域
-    if (direction == -1.0) {
-        // 从右往左翻页时的阴影范围计算
-        // x坐标扩展阴影宽度到左侧和右侧
-        // y坐标扩展阴影宽度到上下两侧
-        return p.x > 0.0 - shadowWidth && p.x <= aspect + shadowWidth &&
-        p.y > 0.0 - shadowWidth && p.y <= 1.0 + shadowWidth;
+float calShadow(vec2 targetPoint, float aspect) {
+    if (iCurlDirection == -1.0) {
+        if (targetPoint.y >= 1.0) {
+            return max(pow(clamp((targetPoint.y - 1.0) / shadowWidth, 0.0, 0.9), 0.2), pow(clamp((targetPoint.x - aspect) / shadowWidth, 0.0, 0.9), 0.2));
+        } else {
+            return max(pow(clamp((0.0 - targetPoint.y) / shadowWidth, 0.0, 0.9), 0.2), pow(clamp((targetPoint.x - aspect) / shadowWidth, 0.0, 0.9), 0.2));
+        }
     } else {
-        // 从左往右翻页时的阴影范围计算
-        // x坐标从阴影宽度开始到右侧扩展
-        // y坐标扩展阴影宽度到上下两侧
-        return p.x > 0.0 - shadowWidth && p.x <= aspect + shadowWidth &&
-        p.y > 0.0 - shadowWidth && p.y <= 1.0 + shadowWidth;
+        if (targetPoint.y >= 1.0) {
+            return max(pow(clamp((targetPoint.y - 1.0) / shadowWidth, 0.0, 0.9), 0.2), pow(clamp((-targetPoint.x) / shadowWidth, 0.0, 0.9), 0.2));
+        } else {
+            return max(pow(clamp((0.0 - targetPoint.y) / shadowWidth, 0.0, 0.9), 0.2), pow(clamp((-targetPoint.x) / shadowWidth, 0.0, 0.9), 0.2));
+        }
     }
 }
 
@@ -361,49 +314,39 @@ vec4 renderPageCurl(vec2 fragCoord) {
     // 判断当前点位于翻页效果的哪个区域
     if (dist > radius) {
         // 背面区域 - 显示背面纹理
-        // 从背面纹理采样颜色
         result = texture(iChannel1, texCoord);
-        result.rgb *= pow(clamp(dist - radius, 0., 1.) * 1.5, .2); // 距离越远越暗
+        result.rgb *= pow(clamp(dist - radius, 0., 1.) * 1.5, 0.1); // 距离越远变暗效果更强，防止泛白
     } else if (dist >= 0.0) {
         // 弯曲区域 - 翻页过渡区域
-        // 计算弯曲角度
         float theta = asin(dist / radius);
-        // 计算弯曲后映射到的两个可能位置
         vec2 p2 = curlAxisLinePoint + mouseDir * (pi - theta) * radius;
         vec2 p1 = curlAxisLinePoint + mouseDir * theta * radius;
 
-        // 判断使用哪个映射点（优先使用在有效范围内的点）
-        bool useP2 = isInBounds(p2, aspect);
-        vec2 samplePoint = useP2 ? p2 : p1;
-        // 从正面纹理采样颜色
-        result = texture(iChannel0, toTexCoord(samplePoint, aspect));
-        result.rgb *= pow(clamp((radius - dist) / radius, 0.0, 1.0), 0.2); // 根据曲率调整亮度
-
-        // 检查是否在阴影范围内
-        if (!useP2) {
-            // 超出范围，检查是否需要应用阴影效果
-            float shadowFactor = 1.0;
-            if (isInShadowBounds(p2, aspect, iCurlDirection)) {
-                // 计算改进的阴影强度
-                shadowFactor = calculateAdvancedShadow(p2, aspect);
+        if (isInBounds(p2, aspect)) {
+            result = texture(iChannel0, toTexCoord(p2, aspect));
+            result.rgb *= pow(clamp((radius - dist) / radius, 0.0, 1.0), 0.2); // 应用弯曲区域的亮度调整
+        } else {
+            // p2 不在界内，使用 p1 采样
+            result = texture(iChannel0, toTexCoord(p1, aspect));
+            // 检查 p2 是否在阴影投射范围内
+            if ((p2.x <= aspect + shadowWidth && p2.x >= 0.0 - shadowWidth && p2.y <= 1.0 + shadowWidth && p2.y >= 0.0 - shadowWidth)) {
+                float shadowFactor = calShadow(p2, aspect);
+                result.rgb *= shadowFactor;
             }
-            // 应用光照和阴影
-            result *= shadowFactor; // 应用阴影强度
         }
     } else {
         // 正面区域 - 显示正面纹理
-        // 计算正面区域映射后的位置
         vec2 p = curlAxisLinePoint + mouseDir * (abs(dist) + pi * radius);
-        bool isInBoundsP = isInBounds(p, aspect);
-        result = isInBoundsP ? texture(iChannel0, toTexCoord(p, aspect)) : texture(iChannel0, texCoord);
-        // 判断映射位置是否在有效范围内
-        if (!isInBoundsP) {
-            float shadowFactor = 1.0;
-            if (isInShadowBounds(p, aspect, iCurlDirection)) {
-                // 计算改进的阴影强度
-                shadowFactor = calculateAdvancedShadow(p, aspect);
+        if (isInBounds(p, aspect)) {
+            result = texture(iChannel0, toTexCoord(p, aspect));
+        } else {
+            // p 不在界内，采样原始 uv (texCoord)
+            result = texture(iChannel0, texCoord);
+            // 检查 p 是否在阴影投射范围内
+            if (p.x <= aspect + shadowWidth && p.x >= 0.0 - shadowWidth && p.y <= 1.0 + shadowWidth && p.y >= 0.0 - shadowWidth) {
+                float shadowFactor = calShadow(p, aspect);
+                result.rgb *= shadowFactor;
             }
-            result *= shadowFactor; // 应用阴影强度
         }
     }
 
