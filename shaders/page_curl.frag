@@ -1,5 +1,3 @@
-#version 460
-
 #include <flutter/runtime_effect.glsl>
 
 // 定义渲染分辨率uniform变量
@@ -20,6 +18,7 @@ const float pi = 3.14159265359; // 圆周率
 const float radius = 0.05; // 翻页曲率半径
 // 定义阴影效果的宽度
 const float shadowWidth = 0.02; // 阴影宽度
+
 // 定义轨道线的显示厚度
 const float trackLineThickness = 0.002; // 轨道线的厚度
 // 定义调试点的显示大小
@@ -29,7 +28,7 @@ const float lineThickness = 0.003; // 线条厚度
 
 // 抗锯齿模式选择
 // 0: 无抗锯齿, 1: 优化MSAA, 2: 原始MSAA
-const int aaMode = 1;
+const int aaMode = 0;
 
 // 原始MAAA抗锯齿参数
 // 抗锯齿采样数（2x2 = 4个采样点）
@@ -202,6 +201,28 @@ vec2 pointOnCircle(vec2 center, vec2 startPoint, float currentRadius, float arcL
 }
 
 /**
+ * 检查origin点是否在4个对角
+ * 判断origin点是否位于屏幕的4个角落区域
+ * @param origin origin点坐标
+ * @param aspect 宽高比
+ * @return 是否在对角区域
+ */
+bool isOriginInCorner(vec2 origin, float aspect) {
+    const float cornerThreshold = 0.1; // 角落区域的阈值
+    
+    // 检查是否在左上角
+    if (origin.x <= cornerThreshold && origin.y <= cornerThreshold) return true;
+    // 检查是否在右上角
+    if (origin.x >= aspect - cornerThreshold && origin.y <= cornerThreshold) return true;
+    // 检查是否在左下角
+    if (origin.x <= cornerThreshold && origin.y >= 1.0 - cornerThreshold) return true;
+    // 检查是否在右下角
+    if (origin.x >= aspect - cornerThreshold && origin.y >= 1.0 - cornerThreshold) return true;
+    
+    return false;
+}
+
+/**
  * 转换坐标到纹理坐标
  * 将世界坐标转换为适合纹理采样的归一化坐标
  * @param coord 输入坐标
@@ -287,6 +308,43 @@ vec4 renderPageCurl(vec2 fragCoord) {
         origin.y = clamp(origin.y, 0.0, 1.0); // 仅限制y坐标
     }
 
+    // 只有当origin点在4个对角时，才应用鼠标位置约束
+    if (isOriginInCorner(origin, aspect)) {
+        vec2 cornerFrom = (iMouse.w < iResolution.y / 2.0) ? vec2(aspect, 0.0) : vec2(aspect, 1.0);
+        
+        // 鼠标位置跟左上角的距离大于aspect，才会发生翻页范围大于屏幕
+        if (distance(mouse.xy, vec2(0.0, cornerFrom.y)) > aspect) {
+            // 修复规则，结合两个部分：
+            // 1. 如果触摸点位置位于左上角向右下角60度的直线上，那么将触摸点改为半径aspect的那个弧线跟60度直线的交点
+            // 2. 如果不在上述60度的直线上，那么取当前触摸点跟60度直线的距离，与半径aspect的弧度的距离，这两者取较小值
+            // 3. 获取到第二步的数值后，以当前触摸点跟左上角的直线与半径aspect的弧线的交点为基准，根据获取到的值进行一定的偏移
+
+            vec2 startPoint = vec2(0.0, cornerFrom.y == 0.0 ? 0.0 : 1.0);
+            vec2 vector = normalize(vec2(0.5, 0.5 * tan(pi / 3.0)));
+
+            vec2 targetMouse = mouse.xy;
+
+            vec2 v = targetMouse - startPoint;
+            float proj_length = dot(v, vector);
+            vec2 targetMouse_proj = startPoint + proj_length * vector;
+
+            // 距离基准直线的距离
+            float base_line_distance = length(targetMouse_proj - targetMouse);
+            // 当前触摸点距离弧线距离
+            float arc_distance = distance(targetMouse, startPoint) - aspect;
+            // 取小值
+            float actual_distance = min(abs(base_line_distance), abs(arc_distance));
+
+            // 当前触摸点对应在弧线上的映射点
+            vec2 currentMouse_arc_proj = startPoint + normalize(mouse - startPoint) * aspect;
+
+            vec2 newPoint_arc_proj = pointOnCircle(startPoint, currentMouse_arc_proj, aspect, actual_distance / 2.0, mouse.y <= tan(pi / 3.0) * mouse.x);
+
+            // 根据最新计算结果，修正鼠标参数
+            mouse = newPoint_arc_proj;
+        }
+    }
+
     // 计算鼠标位置到原点的距离
     // 计算翻页距离
     float mouseDist;
@@ -297,6 +355,7 @@ vec4 renderPageCurl(vec2 fragCoord) {
     if (mouseDir.x < 0.) {
         mouseDist = distance(mouse, origin);
     }
+    
     // 计算当前UV点在翻页方向上的投影距离
     float proj = dot(uv - origin, mouseDir); // UV点在翻页方向上的投影距离
     // 计算当前点到翻页轴线的距离
@@ -405,8 +464,10 @@ void main() {
     if (showDebug) {
         // 计算用于调试显示的坐标
         float aspect = iResolution.x / iResolution.y;
-        vec2 uv = fragCoord * vec2(aspect, 1.0) / iResolution.xy;
-        vec2 mouse = iMouse.xy * vec2(aspect, 1.0) / iResolution.xy;
+        vec2 normalization = vec2(aspect, 1.0) / iResolution.xy;
+        vec2 uv = fragCoord * normalization;
+        vec2 mouse = iMouse.xy * normalization;
+        vec2 mouseStart = iMouse.zw * normalization;
         vec2 mouseDir = normalize(abs(iMouse.zw) - iMouse.xy);
 
         // 声明翻页效果的计算原点
@@ -425,6 +486,31 @@ void main() {
             origin.y = clamp(origin.y, 0.0, 1.0); // 仅限制y坐标
         }
 
+        // 只有当origin点在4个对角时，才应用鼠标位置约束
+        if (isOriginInCorner(origin, aspect)) {
+            vec2 cornerFrom = (iMouse.w < iResolution.y / 2.0) ? vec2(aspect, 0.0) : vec2(aspect, 1.0);
+            
+            if (distance(mouse.xy, vec2(0.0, cornerFrom.y)) > aspect) {
+                vec2 startPoint = vec2(0.0, cornerFrom.y == 0.0 ? 0.0 : 1.0);
+                vec2 vector = normalize(vec2(0.5, 0.5 * tan(pi / 3.0)));
+
+                vec2 targetMouse = mouse.xy;
+
+                vec2 v = targetMouse - startPoint;
+                float proj_length = dot(v, vector);
+                vec2 targetMouse_proj = startPoint + proj_length * vector;
+
+                float base_line_distance = length(targetMouse_proj - targetMouse);
+                float arc_distance = distance(targetMouse, startPoint) - aspect;
+                float actual_distance = min(abs(base_line_distance), abs(arc_distance));
+
+                vec2 currentMouse_arc_proj = startPoint + normalize(mouse - startPoint) * aspect;
+                vec2 newPoint_arc_proj = pointOnCircle(startPoint, currentMouse_arc_proj, aspect, actual_distance / 2.0, mouse.y <= tan(pi / 3.0) * mouse.x);
+
+                mouse = newPoint_arc_proj;
+            }
+        }
+
         // 计算翻页距离和轴线点
         float mouseDist;
         mouseDist = clamp(length(mouse - origin) +
@@ -436,10 +522,41 @@ void main() {
         float dist = proj - mouseDist;
         vec2 curlAxisLinePoint = uv - dist * mouseDir;
 
-        // 调试显示（可选）
-        // 画origin点 - 用绿色高亮显示翻页起点
+        // 画origin点 - 用绿色高亮显示翻页起点，如果在对角则用蓝色
         if (drawPoint(uv, origin)) {
-            vs = mix(vs, vec4(0.0, 1.0, 0.0, 1.0), 0.7);
+            if (isOriginInCorner(origin, aspect)) {
+                vs = mix(vs, vec4(0.0, 0.0, 1.0, 1.0), 0.7); // 蓝色表示在对角
+            } else {
+                vs = mix(vs, vec4(0.0, 1.0, 0.0, 1.0), 0.7); // 绿色表示不在对角
+            }
+        }
+
+        // 画curlAxisLinePoint点
+        if (drawPoint(uv, curlAxisLinePoint)) {
+            vs = mix(vs, vec4(1.0, 0.0, 0.0, 1.0), 0.7);
+        }
+
+        // 画鼠标线起点到当前点
+        if (drawLine(uv, mouseStart, mouse)) {
+            vs = mix(vs, vec4(1.0, 0.0, 0.0, 1.0), 0.7);
+        }
+
+        // 当origin在对角时，绘制限制圆
+        if (isOriginInCorner(origin, aspect)) {
+            vec2 cornerFrom = (iMouse.w < iResolution.y / 2.0) ? vec2(aspect, 0.0) : vec2(aspect, 1.0);
+            vec2 startPoint = vec2(0.0, cornerFrom.y == 0.0 ? 0.0 : 1.0);
+            
+            // 绘制限制圆（半径为aspect）
+            if (drawTrackCircle(uv, startPoint, aspect, aspect)) {
+                vs = mix(vs, vec4(1.0, 1.0, 0.0, 1.0), 0.5); // 黄色圆圈表示限制范围
+            }
+            
+            // 绘制60度基准线
+            vec2 vector = normalize(vec2(0.5, 0.5 * tan(pi / 3.0)));
+            vec2 lineEnd = startPoint + vector * aspect;
+            if (drawLine(uv, startPoint, lineEnd)) {
+                vs = mix(vs, vec4(0.0, 1.0, 1.0, 1.0), 0.6); // 青色线表示60度基准线
+            }
         }
     }
 
